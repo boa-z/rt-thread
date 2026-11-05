@@ -71,3 +71,6 @@ vdso.lds
 
 # mac
 .DS_Store
+
+# ArtInChip local build artifacts (not source)
+/artifacts/
