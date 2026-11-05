@@ -10,6 +10,15 @@
 #define __BOARD_H__
 
 #include <rtthread.h>
+#include <interrupt.h>
+
+#ifndef MAX_HANDLERS
+#define MAX_HANDLERS            128
+#endif
+
+#ifndef INTC_TYPE
+#define INTC_TYPE               INTC_TYPE_CLIC
+#endif
 
 #ifdef __cplusplus
 extern "C" {

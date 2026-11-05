@@ -48,9 +48,12 @@ link_lds = env.Command('link.lds',
     ['board/link.lds.S', 'rtconfig.h', '.config'],
     env.Action(aic_link_lds_action, 'GEN link.lds'))
 
-# D12p uses a BSP-local E9xx CPU port.  The generic libcpu/risc-v/common
-# trap entry targets a CLINT/PLIC core and is not used here.
-objs = PrepareBuilding(env, RTT_ROOT, has_libcpu=True)
+# Generate link.lds before PrepareBuilding so the RISC-V common SConscript
+# sees the ArtInChip PSRAM layout on a clean build.
+if os.path.exists('rtconfig.h'):
+    aic_link_lds_action(['link.lds'], [], env)
+
+objs = PrepareBuilding(env, RTT_ROOT, has_libcpu=False)
 
 env.Depends(TARGET, link_lds)
 DoBuilding(TARGET, objs)
