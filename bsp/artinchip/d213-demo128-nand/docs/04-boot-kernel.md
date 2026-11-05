@@ -134,8 +134,9 @@ common `riscv_timer.c` 负责 Tick；BSP 只覆盖：
 ## 4.7 中断栈
 
 common port 使用 `ARCH_RISCV_USING_IRQ_STACK`，每个 CPU 在 `.bss`
-中分配 `ARCH_RISCV_IRQ_STACK_SIZE`（默认 1024 字节）中断栈。Trap
-现场保存在被中断线程栈上，C 级 `rt_hw_trap()` 在中断栈上运行。
+中分配 `ARCH_RISCV_IRQ_STACK_SIZE` 中断栈。本 BSP 的构建配置设为
+4096 字节（D213 minimal/default 和 D126 minimal）。Trap 现场保存在
+被中断线程栈上，C 级 `rt_hw_trap()` 在中断栈上运行。
 
 如果后续在 ISR 中增加深调用链，可在 Kconfig 增大
 `ARCH_RISCV_IRQ_STACK_SIZE`。

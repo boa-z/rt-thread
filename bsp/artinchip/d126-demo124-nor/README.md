@@ -129,7 +129,7 @@ python3 tools/check_elf.py --elf rtthread.elf
 
 ```text
 text    data    bss     dec     hex
-47528   744     6992    55264   d7e0
+47544   744     10064   58352   e3f0
 ```
 
 `rtthread.elf` 为 ELF32、RISC-V、RVC + single-float ABI，入口

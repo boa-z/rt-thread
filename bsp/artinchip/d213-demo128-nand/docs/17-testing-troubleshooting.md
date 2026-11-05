@@ -27,8 +27,8 @@ Homebrew GCC 16.1.0、Newlib 4.6.0、Python 3.13、SCons 4.8.1：
 
 | 配置 | text | data | bss | 合计 |
 |---|---:|---:|---:|---:|
-| `configs/d213-minimal.config` | 63696 | 1056 | 11464 | 76216 |
-| `configs/d213-default.config` | 113688 | 4360 | 12648 | 130696 |
+| `configs/d213-minimal.config` | 63696 | 1056 | 14536 | 79288 |
+| `configs/d213-default.config` | 113688 | 4360 | 15720 | 133768 |
 | 默认 + lvgl-aic-standalone 软件路径 | 本次迁移未重建 | - | - | - |
 
 打包结果：
