@@ -4,6 +4,10 @@ D126FxR-DEMO-V1-1 的原生 RT-Thread BSP。当前版本完成了 D12p/E907F
 最小启动、CORET tick、UART0 控制台、GPIO pin 设备、ELF 检查和固件
 打包流程。显示、触摸和其余外设尚未在实机上验证。
 
+- RT-Thread upstream baseline: `89c70abccd0359f9f7ba9df2e81dbe764d3e78d3`
+- CPU port: `libcpu/risc-v/common`（Next RISC-V，PR #10320）
+- 原来的 BSP `cpu/` 已删除
+
 ## 1. 目标板确认
 
 官方 D126 页面：
@@ -44,8 +48,9 @@ target/d12p/d126-demo124-nor
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
+| Common Port | PASS | RT-Thread PR #10320 Next RISC-V |
 | BUILD | PASS | macOS + `riscv64-unknown-elf-gcc 16.1.0` |
-| HOST | PASS | `tools/check_elf.py` 静态检查 |
+| HOST | PASS | `../tools/check_elf.py` 静态检查 |
 | PACKAGE | PASS（占位 bootloader） | 生成 ITB 和最终 `.img` |
 | HW | PENDING | 未在 D126 实物上启动 |
 | PSRAM 边界 | PENDING | 默认只使用 8 MB |
@@ -55,12 +60,17 @@ target/d12p/d126-demo124-nor
 | Display/Touch | 未实现 | 等待硬件确认 |
 | CAN FD | 未实现 | 不能复用 D213 Classic CAN |
 
-本 BSP 的 CPU 端口位于 `cpu/`，**没有修改 `libcpu/` 或 RT-Thread
-内核通用代码**。
+本 BSP 使用 RT-Thread 官方 `libcpu/risc-v/common`，原来 BSP 内的
+`cpu/` 自维护 E907 port 已删除。板级差异只保留在 `board/`：
 
-D213 回归：同一分支上对 `bsp/artinchip/d213-demo128-nand` 做 clean
-构建，BUILD PASS，默认配置 `text=112480, data=4328, bss=11400`，
-D213 源码未改动。
+- CLIC MMIO/quirk；
+- CORET `rdtime`/`mtimecmp`；
+- UART0 时钟/引脚；
+- GPIO v1.2 pin 驱动；
+- D12p 打包。
+
+D213 回归：同一分支上 D213 minimal/default clean build 均 PASS，
+详见 `artifacts/manifest.md` 和 `bsp/artinchip/TEST-TOMORROW.md`。
 
 ## 3. 目录结构
 
@@ -72,29 +82,25 @@ bsp/artinchip/d126-demo124-nor/
 ├── rtconfig.py
 ├── .config / rtconfig.h        # 由 .config 生成
 ├── board/
-│   ├── startup_gcc.S           # D12p CLIC 向量表、启动入口
-│   ├── interrupt_gcc.S         # IRQ / exception 入口
-│   ├── interrupt.c             # CLIC 分发和 rt_hw_interrupt_install
-│   ├── tick.c                  # CORET tick 和 us 延时
+│   ├── interrupt.c             # CLIC platform hooks
+│   ├── timer.c                 # CORET rdtime/mtimecmp overrides
 │   ├── clock.c                 # 最小 CMU/PLL/UART0 时钟推导
 │   ├── uart.c                  # UART0 控制台和 char 设备
 │   ├── board.c                 # 板级初始化
 │   ├── board.h
 │   └── link.lds.S              # PSRAM 链接脚本
-├── cpu/
-│   ├── context_gcc.S           # E9xx RV32 上下文切换 / PendSV
-│   ├── cpuport.c               # 线程栈初始化
-│   └── cpuport.h
+├── configs/
+│   └── d126-minimal.config     # 可复现构建配置
 ├── drivers/
 │   └── drv_gpio.c              # GPIO v1.2 pin 设备
 ├── applications/
-│   └── main.c                  # tick / FPU 自检
+│   └── main.c                  # tick / FPU / memtest 自检
 ├── pack/
 │   ├── image_cfg.json          # D12p 16 MB SPI NOR 分区
 │   ├── pbp_cfg.json            # 原厂 PSRAM PBP 参数
 │   └── env.txt
 ├── tools/
-│   ├── check_elf.py
+│   ├── check_elf.py            # shared checker wrapper
 │   └── mk_firmware.py
 └── docs/
 ```
@@ -119,15 +125,17 @@ python3 tools/check_elf.py --elf rtthread.elf
 `--pyconfig-silent` 只应在修改 `.config` 后执行；`rtconfig.h` 必须由
 `.config` 生成，不手工编辑。
 
-当前构建结果（默认 `.config`，含 GPIO）：
+当前构建结果（`configs/d126-minimal.config`，含 GPIO 和 common port）：
 
 ```text
 text    data    bss     dec     hex
-44128   736     5880    50744   c638
+47528   744     6992    55264   d7e0
 ```
 
 `rtthread.elf` 为 ELF32、RISC-V、RVC + single-float ABI，入口
-`0x40000000`。
+`0x40000000`。`tools/check_elf.py` 会检查 common `system_vectors`、
+`.percpu`、BSS/heap 边界，并拒绝旧的 `__Vectors`/`PendSV_Handler`
+符号。
 
 ## 5. 打包
 
@@ -217,26 +225,29 @@ RT-Thread 镜像链接在 PSRAM：
 
 ```text
 0x40000000  .text / .rodata / .data / .bss
-            boot stack (8 KiB)
+            .percpu（common 早期栈；IRQ 栈在 .bss）
             system heap -> 0x40800000 (8 MB PSRAM)
 ```
 
-入口流程：
+入口流程（全部来自 common port）：
 
-1. `Reset_Handler` 建立 `gp`、`sp`、`mtvec`、`mtvt`；
-2. 打开 FPU、MXSTATUS.MM/THEADISAEE、I/D cache；
-3. 清 BSS，跳转 `entry`；
-4. `rt_hw_board_init()` 初始化时钟、UART0、CLIC、CORET、heap；
-5. 启动调度器。
+1. common `_start` 读取 `mhartid`，设置 `gp` 和 `.percpu` 早期栈；
+2. `riscv_early_setup()`（BSP 可覆盖）；
+3. `riscv_bss_init()` 清 BSS；
+4. `riscv_boot_hart_init()`；
+5. `kernel_start` 初始化 IRQ 栈，设置 `mtvec = system_vectors`；
+6. `rt_hw_board_init()` 初始化 CLIC、CORET、UART0、heap；
+7. 启动调度器。
 
 CLIC 细节：
 
 - CLIC 基址：`0x20800000`；
-- `mtvec = Default_Handler | 3`（CLIC 模式）；
-- `mtvt = __Vectors`，64 字节对齐；
-- 向量 3 为 `PendSV_Handler`，用于上下文切换；
+- common 使用 direct mode：`mtvec = system_vectors`；
+- `platform_get_clic_base/size/quirks()` 提供 MMIO 和 MINTTHRESH quirk；
 - CORET IRQ 7，1000 Hz；
-- `CLICINTCTL` 默认优先级 `0x80`，`MINTTHRESH=0`。
+- `rt_hw_interrupt_umask(7)` 使能 CLICINTIE[MTIP]；
+- 上下文切换由 common `context_gcc.S` 直接完成，不再使用
+  TSPEND/PendSV 向量。
 
 ## 7. 控制台和自检
 
@@ -275,9 +286,11 @@ pin read PA.0
 
 ```text
 CONFIG_BOARD_ARTINCHIP_D126_DEMO124_NOR=y
+CONFIG_RT_USING_RISCV_NEW_COMMON=y
+CONFIG_ARCH_RISCV32=y
+CONFIG_ARCH_RISCV_M_MODE=y
 CONFIG_CPU_BASE=0x20000000
 CONFIG_AIC_PSRAM_SIZE=0x800000
-CONFIG_AIC_BOOT_STACK_SIZE=0x2000
 CONFIG_RT_TICK_PER_SECOND=1000
 CONFIG_RT_USING_DEVICE=y
 CONFIG_RT_USING_PIN=y
@@ -301,6 +314,10 @@ CONFIG_BSP_UART0_BAUD=115200
 - 控制台 char 设备的 `read` 是阻塞轮询；后续应替换为 UART 中断 +
   ring buffer 的 `rt_serial_device`。
 - GPIO 中断只实现了 PA..PF（IRQ 68..73），PM/PN 未实现中断。
+- CLIC 当前使用 common direct mode；如果实物只支持 SHV/vector
+  mode，需要补充 `RISCV_CLIC_QUIRK_SHV` 和硬件 vector table。
+- `clock.c` 从 PLL 寄存器推导频率；如果 PBP 的 PLL 状态与假设不符，
+  UART 波特率和 tick 频率会偏移。
 - 未实现 I2C、SPI/QSPI、WDT、RTC、PWM、CAN FD、MIPI DSI、触摸。
 - 不使用 D213 的 DDR/PLIC/LVDS/CAN 实现。
 

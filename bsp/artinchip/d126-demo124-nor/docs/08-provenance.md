@@ -5,20 +5,20 @@ Bootloader、PBP 二进制或再分发权限不明确的资源。
 
 ## 1. 本仓库新增代码
 
-- `board/startup_gcc.S`
-- `board/interrupt_gcc.S`
-- `board/interrupt.c`
-- `board/tick.c`
+- `board/interrupt.c`（CLIC platform hooks）
+- `board/timer.c`（CORET accessors）
 - `board/clock.c`
 - `board/uart.c`
 - `board/board.c`
-- `cpu/`
 - `drivers/drv_gpio.c`
 - `applications/main.c`
 - `tools/check_elf.py`
 - `tools/mk_firmware.py`
 
-以上代码由本移植工作编写，许可为 Apache-2.0。
+以上代码由本移植工作编写，许可为 Apache-2.0。CPU 启动、Trap、上下文
+切换、IRQ 栈和 Timer 核心来自 RT-Thread upstream
+`libcpu/risc-v/common`；本分支只对 common 的 FPU/fcsr 上下文保存做了
+最小修复。
 
 ## 2. 参考的 ArtInChip Luban-Lite 源码
 
@@ -73,9 +73,12 @@ usbupg-psram-init.aic
 
 - 内核、FinSH、设备框架、pin 框架；
 - 内存管理、IPC、libc 适配；
-- 构建系统。
+- 构建系统；
+- `libcpu/risc-v/common` 启动、Trap、上下文切换、IRQ 栈、Timer。
 
-没有修改 RT-Thread 内核通用组件，也没有修改 `libcpu/`。
+本分支对 `libcpu/risc-v/common/context_gcc.S` 和 `stack.c` 做了
+FPU/fcsr 上下文保存补丁，原因和影响记录在对应提交中。未修改
+RT-Thread 内核 `src/`、`components/` 或构建系统。
 
 ## 6. 上游提交注意
 

@@ -31,7 +31,3 @@ config CPU_BASE
 config AIC_PSRAM_SIZE
     hex "PSRAM size"
     default 0x800000
-
-config AIC_BOOT_STACK_SIZE
-    hex "Boot/interrupt stack size"
-    default 0x2000

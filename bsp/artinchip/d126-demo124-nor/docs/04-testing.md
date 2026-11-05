@@ -24,16 +24,19 @@ RTT_EXEC_PATH=/opt/homebrew/bin \
 预期：
 
 ```text
-D126 ELF check: PASS
-  entry        : 0x40000000
-  start        : 0x40000000
-  vectors      : 0x40008180 (aligned)
-  boot stack   : 0x4000c670..0x4000e670
-  heap         : 0x4000e670..0x40800000 (8134 KiB)
+ArtInChip RISC-V check: PASS
+  ELF          : ELF32, single-float ABI
+  entry/_start : 0x40000000
+  trap vector  : 0x40000180 (direct mode)
+  controler    : CLIC
+  BSS          : ...
+  percpu       : ...
+  heap         : ... -> 0x40800000
 ```
 
-地址会随代码/配置变化，但 entry 必须为 `0x40000000`，vectors 必须
-64 字节对齐。
+地址会随代码/配置变化，但 entry 必须为 `0x40000000`，
+`system_vectors` 必须 64 字节对齐，且不应出现旧的 `__Vectors`/
+`PendSV_Handler`。
 
 ## 3. 打包检查
 

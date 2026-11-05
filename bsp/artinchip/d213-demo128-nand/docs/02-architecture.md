@@ -45,7 +45,7 @@ sequenceDiagram
     S->>S: 设置 gp/sp/mtvec，清 BSS
     S->>B: entry() -> rt_hw_board_init()
     B->>B: FPU、CMU 门控、UART pinmux、堆
-    B->>B: PLIC 初始化、UART0 注册、CLINT tick
+    B->>B: common PLIC 初始化、UART0 注册、common tick
     B->>C: rt_components_board_init()
     C->>C: INIT_BOARD_EXPORT：rt_hw_gpio_init()
     B->>B: rt_console_set_device("uart0")
@@ -111,9 +111,9 @@ Bootloader 保留区之下；`AIC_FB_RESERVED_SIZE=0` 时该区域自动消失�
 ```mermaid
 flowchart LR
     DEV[外设控制器] --> PLIC[PLIC]
-    PLIC --> TRAP[libcpu rv64 trap_entry]
-    TRAP --> ISR[rt_hw_irq_isr]
-    ISR --> TABLE[aic_irq_table]
+    PLIC --> TRAP[common system_vectors / rt_hw_trap]
+    TRAP --> ISR[common PLIC claim/complete]
+    ISR --> TABLE[irq_desc / IRQ_PLIC]
     TABLE --> UART[UART ISR]
     TABLE --> GPIO[GPIO group ISR]
     TABLE --> CAN[CAN HAL ISR]
@@ -123,7 +123,8 @@ flowchart LR
 - UART、CAN、GPIO 使用中断；
 - I2C 主机路径使用 HAL 的轮询/超时实现，不使用 I2C 中断；
 - PWM/WDT/RTC 当前不注册中断（RTC 闹钟未实现）；
-- PLIC 的 claim/complete 由 `board/interrupt.c` 完成。
+- PLIC 的 claim/complete、`irq_desc` 和 mask/umask 由
+  `libcpu/risc-v/common` 完成，BSP 只提供 MMIO/PER quirk。
 
 ## 2.5 Kconfig 组织
 

@@ -13,7 +13,7 @@
 
 | 代码 | 归属 | 上游候选处理 |
 |---|---|---|
-| `board/` 启动、时钟、PLIC、CLINT、Cache | BSP | 保留 |
+| `board/` common-port glue、时钟、PLIC quirk、Cache、linker | BSP | 保留 |
 | `drivers/drv_uart.c` / `drv_gpio.c` / `drv_i2c.c` | BSP | 保留 |
 | `drivers/drv_can.c` / `drv_pwm.c` / `drv_wdt.c` / `drv_rtc.c` | BSP | 保留 |
 | `drivers/drv_disp.c` / `drv_ge.c` | BSP | 保留，保持标准/公开接口 |
@@ -37,7 +37,7 @@ lvgl-aic-standalone
   ├─ official LVGL v9.6.0 (external)
   ├─ RT-Thread kernel/device APIs
   └─ optional D21x public BSP APIs:
-       drv_disp.h, drv_ge.h, board/cache.h
+       drv_disp.h, drv_ge.h, board/aic_cache.h
 
 application/demo
   └─ lvgl-aic-standalone public API
@@ -66,12 +66,16 @@ application/demo
 
 ## 21.5 候选 PR 拆分
 
-1. `[bsp][artinchip] add D213 M-mode startup, PLIC and CLINT`
-2. `[bsp][artinchip] add D213 UART, GPIO and I2C`
-3. `[bsp][artinchip] add D213 CAN, PWM, WDT and RTC`
-4. `[bsp][artinchip] add D213 LVDS/DE framebuffer and GE Normal`
-5. `[bsp][artinchip] add D213 GT911 touch`
-6. `[bsp][artinchip] add D213 docs, packaging and validation`
+1. `[libcpu][riscv] preserve FPU state across common context switches`
+2. `[bsp][artinchip] migrate D213 to the Next RISC-V common port`
+3. `[bsp][artinchip] add D213 UART, GPIO and I2C`
+4. `[bsp][artinchip] add D213 CAN, PWM, WDT and RTC`
+5. `[bsp][artinchip] add D213 LVDS/DE framebuffer and GE Normal`
+6. `[bsp][artinchip] add D213 GT911 touch`
+7. `[bsp][artinchip] add D213 docs, packaging and validation`
+
+D213 现在依赖 RT-Thread `RT_USING_RISCV_NEW_COMMON`，不再使用
+`libcpu/risc-v/rv64` 或 `board/start_gcc.S`。
 
 组件相关提交留在 `lvgl-aic-standalone`，不混入 BSP PR。
 

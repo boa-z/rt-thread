@@ -22,18 +22,21 @@
 
 ### 参考构建记录
 
-默认 `.config`（UART0/1、GPIO、I2C3、CAN0/1、PWM、WDT、RTC、LVDS/DE、双缓冲、GE），Xuantie GCC 14.3.0、Python 3.13.15、SCons 4.8.1：
+默认配置（UART0/1、GPIO、I2C3、CAN0/1、PWM、WDT、RTC、LVDS/DE、双缓冲、GE），
+Homebrew GCC 16.1.0、Newlib 4.6.0、Python 3.13、SCons 4.8.1：
 
 | 配置 | text | data | bss | 合计 |
 |---|---:|---:|---:|---:|
-| 默认 `.config` | 106464 | 5856 | 10808 | 123128 |
-| 默认 `.config` + lvgl-aic-standalone 软件路径 | 586192 | 4496 | 12832 | 603520 |
+| `configs/d213-minimal.config` | 63696 | 1056 | 11464 | 76216 |
+| `configs/d213-default.config` | 113688 | 4360 | 12648 | 130696 |
+| 默认 + lvgl-aic-standalone 软件路径 | 本次迁移未重建 | - | - | - |
 
 打包结果：
 
 | 配置 | `rtthread.bin` | `d21x_os.itb` | 最终 `.img` |
 |---|---:|---:|---:|
-| 默认 `.config`（含 GT911） | 116808 | 120832 | 970240 |
+| minimal | 64800 | 67584 | 916992 |
+| 默认 `.config`（含 GT911） | 118280 | 120832 | 970240 |
 
 最终 `.img` 包含 Bootloader/ENV/PBP，具体大小随 SDK 资产变化。
 

@@ -50,7 +50,16 @@ link_lds = env.Command('link.lds',
 
 # Generate link.lds before PrepareBuilding so the RISC-V common SConscript
 # sees the ArtInChip PSRAM layout on a clean build.
-if os.path.exists('rtconfig.h'):
+def aic_config_only():
+    for opt in ('menuconfig', 'defconfig', 'guiconfig'):
+        try:
+            if GetOption(opt):
+                return True
+        except Exception:
+            pass
+    return False
+
+if os.path.exists('rtconfig.h') and not aic_config_only():
     aic_link_lds_action(['link.lds'], [], env)
 
 objs = PrepareBuilding(env, RTT_ROOT, has_libcpu=False)

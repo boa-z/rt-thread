@@ -88,7 +88,7 @@ scons --menuconfig
 
 `scons --menuconfig`、`scons --pyconfig`、`scons --pyconfig-silent`、`scons --defconfig`、`scons --help`、`scons -c` 和 `scons -n` 不执行目标编译器，因此未配置 `RTT_EXEC_PATH` 时也可以使用。
 
-`link.lds` 由 SCons 目标在真实构建/链接时生成，输入为 `board/link.lds.S`、`.config` 和 `rtconfig.h`；修改配置后会先重新生成链接脚本再链接。这样配置操作不会因为缺少 RISC-V GCC 而失败，链接脚本也不会使用过期配置。
+`link.lds` 在正常构建解析 SConstruct 时由 `board/link.lds.S` 预生成，输入为 `.config` 和 `rtconfig.h`；`menuconfig`、`pyconfig`、`clean`、`help` 会跳过预生成，因此配置操作不要求交叉编译器。修改配置后下一次真实构建会重新生成链接脚本再链接。
 
 ## 15.5 编译
 

@@ -126,11 +126,19 @@ FD 数据长度和错误处理不同。
 |---|---|---|
 | 外部中断 | PLIC | CLIC |
 | 定时器 | CLINT | CORET |
-| 上下文切换触发 | CLINT MSIP / 软件中断 | TSPEND + CLIC vector 3 |
+| 上下文切换 | common `context_gcc.S` | common `context_gcc.S` |
 | 中断优先级 | PLIC priority/threshold | CLIC CTL/MINTTHRESH |
 
-因此 D213 的 `board/interrupt.c`、`board/tick.c`、`libcpu/risc-v/rv64`
-不能用于 D12p。
+两者现在共用 `libcpu/risc-v/common` 的 Trap、上下文切换、IRQ 栈和
+Timer 核心。D213 和 D126 的差异只在 platform hook：
+
+```text
+D213: platform_get_plic_base/size/quirks + CLINT accessors
+D126: platform_get_clic_base/size/quirks + CORET accessors
+```
+
+因此不再需要 D12p 自维护 `cpu/`，也不能把 D213 的 PLIC/C906 Cache
+实现直接用于 D126。
 
 ## 8. 提取原则
 

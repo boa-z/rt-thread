@@ -210,7 +210,23 @@ def main():
         print("%-14s %-4s %s" % (name, status, detail))
 
     write_manifest(results, stamp, args.sdk)
+    write_sha256sums()
     return 0 if all(r[1] == "PASS" for r in results) else 1
+
+
+def write_sha256sums():
+    path = os.path.join(ARTIFACTS, "SHA256SUMS")
+    entries = []
+    for root, dirs, files in os.walk(ARTIFACTS):
+        dirs.sort()
+        for fn in sorted(files):
+            if fn in ("SHA256SUMS", "manifest.md") or fn.endswith(".log"):
+                continue
+            full = os.path.join(root, fn)
+            entries.append("%s  %s\n" % (
+                sha256(full), os.path.relpath(full, ARTIFACTS)))
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(entries)
 
 
 def write_manifest(results, stamp, sdk):

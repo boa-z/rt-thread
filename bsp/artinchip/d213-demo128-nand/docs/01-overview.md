@@ -91,10 +91,10 @@ bsp/artinchip/
     │   ├── board.h / board.c       # 板级初始化
     │   ├── clock.c                 # 外设时钟门控
     │   ├── pinmux.c                # UART 引脚复用
-    │   ├── interrupt.c             # PLIC
-    │   ├── tick.c                  # CLINT Tick 与 us 延时
-    │   ├── start_gcc.S             # M-mode 启动
-    │   └── link.lds.S              # 链接脚本模板
+    │   ├── interrupt.c             # PLIC platform hooks
+    │   ├── timer.c                 # CLINT accessors
+    │   ├── cache.c                 # C906 range cache ops
+    │   └── link.lds.S              # common-port linker script
     ├── drivers/
     │   ├── drv_uart.c              # 多 UART
     │   ├── drv_gpio.c              # GPIO/Pin
@@ -164,7 +164,7 @@ scons -j8
 - `rtthread.elf`：可执行 ELF；
 - `rtthread.bin`：裸二进制；
 - `rtthread.map`：链接映射；
-- `link.lds`：只在真实构建时由 `board/link.lds.S` 生成。
+- `link.lds`：正常构建时由 `board/link.lds.S` 预生成；配置/clean 命令跳过。
 
 默认 `.config` 按 D213EC-DEMO-V4-0 板级组合启用 UART0/1、GPIO、I2C3、CAN0/1、PWM、WDT、RTC、LVDS/DE Framebuffer、双缓冲、GE Normal 和外设/显示/GE MSH 测试命令。未使用的 UART2/4、I2C0/1/2 等实例保留在 Kconfig 中，可按需启用。
 

@@ -22,34 +22,40 @@ contrib/artinchip-d126-*       后续独立上游候选补丁
 
 ```text
 bsp/artinchip/
+├── tools/                      # shared ELF/build checks
 ├── d213-demo128-nand/          # D21x/C906 RV64
+│   ├── board/                  # PLIC/C906 hooks
+│   └── configs/
 └── d126-demo124-nor/           # D12p/E907F RV32
-    ├── cpu/                    # BSP-local E9xx CPU port
-    ├── board/
+    ├── board/                  # CLIC/CORET hooks
+    ├── configs/
     ├── drivers/
     ├── pack/
     └── tools/
 ```
 
-D126 的 CPU 端口暂时放在 BSP 内，原因是：
+两个 BSP 都设置 `RT_USING_RISCV_NEW_COMMON=y`，CPU 实现来自：
 
-- 还没有第二块 D12p/D13x 板验证；
-- CLIC/TSPEND/FPU 细节需要实机确认；
-- 避免为了复用而修改 `libcpu/` 影响其他 RISC-V BSP。
+```text
+libcpu/risc-v/common/
+```
 
-## 3. 何时提升到公共层
+D126 原来 BSP 内的 `cpu/` 已删除，不能继续维护第二套线程切换/Trap。
 
-满足以下条件后，才建议把 `cpu/` 提升到
-`libcpu/risc-v/artinchip/e9xx/`：
+## 3. 何时需要公共层
+
+当前不需要把 CLIC/CORET 提取到 `bsp/artinchip/common`。满足以下条件
+后再评估：
 
 1. D126 实机启动、tick、FPU、异常测试通过；
-2. D133 或第二块 D12p 板复用同一 CPU 端口并通过启动；
-3. 确认 CLIC `mtvec/mtvt`、TSPEND、CORET、FPU 保存恢复一致；
+2. D133 或第二块 D12p 板复用同一套 platform hook；
+3. 确认 CLIC direct/SHV 模式、CORET 偏移和 FPU 保存恢复一致；
 4. D213 回归构建和实机功能不退化；
-5. `libcpu/risc-v/SConscript` 增加 `VENDOR/CPU` 分派，且不影响其他 BSP。
+5. 公共层不引入 ArtInChip 特有逻辑到 `libcpu/`。
 
-提升时保持 BSP 的 `SConstruct` 使用 `has_libcpu=False` 或显式选择
-新端口，避免和 `common` 的 `trap_entry`/`SW_handler` 重复。
+需要修改 `libcpu/` 时，单独提交并说明为什么 BSP hook 不足。本分支
+已经为 common context switch 增加 FPU/fcsr 保存，这是两个 BSP 都
+需要的架构修复。
 
 ## 4. 建议的长期目录
 
@@ -97,7 +103,8 @@ bsp/artinchip/
 
 D13x 也使用 E907F 系列和 CLIC/CORET，可优先复用：
 
-- `cpu/` 的 CLIC/上下文切换；
+- `libcpu/risc-v/common` 的 CLIC/上下文切换/Timer 核心；
+- 本 BSP 的 CLIC/CORET platform hook；
 - UART 16550 寄存器定义；
 - GPIO 通用寄存器访问；
 - I2C v1.0 HAL（如果 D13x 也是 v1.0）。
@@ -115,8 +122,8 @@ D13x 也使用 E907F 系列和 CLIC/CORET，可优先复用：
 
 1. 复制 `d126-demo124-nor` 作为模板；
 2. 只改 `board/`、`pack/`、`.config`；
-3. 先保持 `cpu/` 不动，验证启动；
-4. 确认 CPU 端口一致后再提取公共层；
+3. 继续使用 `RT_USING_RISCV_NEW_COMMON`，不要新增 BSP `cpu/`；
+4. 确认 CLIC/CORET hook 一致后再提取公共 SoC 层；
 5. 每块板保留独立的 `docs/01-board-mapping.md` 和测试记录。
 
 ## 7. 上游验收门槛
