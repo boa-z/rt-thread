@@ -41,18 +41,24 @@ rt_uint8_t *rt_hw_stack_init(void *tentry,
 {
     rt_ubase_t *sp;
     rt_hw_switch_frame_t frame;
+    rt_size_t frame_words = RT_HW_SWITCH_CONTEXT_SIZE;
 
-    /* We use a strict alignment requirement for Q extension */
+#ifdef ARCH_RISCV_FPU
+    /* 32 FPU slots plus fcsr, rounded to the 16-byte ABI alignment. */
+    frame_words += CTX_FPU_REG_NR + 1;
+#endif
+    rt_size_t frame_bytes = RT_ALIGN(frame_words * sizeof(rt_ubase_t), 16);
+
+    /* Keep the trampoline words consumed by _thread_start above the frame. */
     sp = (rt_ubase_t *)RT_ALIGN_DOWN((rt_ubase_t)stack_addr, 16);
+    sp = (rt_ubase_t *)((rt_ubase_t)sp - 4 * sizeof(rt_ubase_t));
+    sp[0] = 0;                          /* padding */
+    sp[1] = (rt_ubase_t)texit;
+    sp[2] = (rt_ubase_t)parameter;
+    sp[3] = (rt_ubase_t)tentry;
 
-    *(--sp) = (rt_ubase_t)tentry;
-    *(--sp) = (rt_ubase_t)parameter;
-    *(--sp) = (rt_ubase_t)texit;
-    /* Alignment */
-    --sp;
-
-    frame = (rt_hw_switch_frame_t)((rt_ubase_t)sp - sizeof(*frame));
-    rt_memset(frame, 0, sizeof(*frame));
+    frame = (rt_hw_switch_frame_t)((rt_ubase_t)sp - frame_bytes);
+    rt_memset(frame, 0, frame_bytes);
 
     frame->regs[RT_HW_SWITCH_CONTEXT_RA] = (rt_ubase_t)_thread_start;
     frame->regs[RT_HW_SWITCH_CONTEXT_XSTATUS] = K_XSTATUS_DEFAULT;
