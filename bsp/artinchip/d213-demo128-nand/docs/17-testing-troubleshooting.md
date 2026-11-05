@@ -27,15 +27,15 @@ Homebrew GCC 16.1.0、Newlib 4.6.0、Python 3.13、SCons 4.8.1：
 
 | 配置 | text | data | bss | 合计 |
 |---|---:|---:|---:|---:|
-| `configs/d213-minimal.config` | 63696 | 1056 | 14536 | 79288 |
-| `configs/d213-default.config` | 113688 | 4360 | 15720 | 133768 |
+| `configs/d213-minimal.config` | 63760 | 1056 | 14536 | 79352 |
+| `configs/d213-default.config` | 113752 | 4360 | 15720 | 133832 |
 | 默认 + lvgl-aic-standalone 软件路径 | 本次迁移未重建 | - | - | - |
 
 打包结果：
 
 | 配置 | `rtthread.bin` | `d21x_os.itb` | 最终 `.img` |
 |---|---:|---:|---:|
-| minimal | 64800 | 67584 | 916992 |
+| minimal | 65056 | 67584 | 916992 |
 | 默认 `.config`（含 GT911） | 118280 | 120832 | 970240 |
 
 最终 `.img` 包含 Bootloader/ENV/PBP，具体大小随 SDK 资产变化。
