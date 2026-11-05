@@ -1,0 +1,12 @@
+build/
+dist/
+images/
+.config.old
+link.lds
+rtthread.elf
+rtthread.bin
+rtthread.map
+rtthread.asm
+*.log
+__pycache__/
+.sconsign.dblite

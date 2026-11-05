@@ -1,0 +1,126 @@
+// Derived from ArtInChip Luban-Lite:
+// target/d21x/demo128-nand/pack/image_cfg.json (Apache-2.0).
+{
+    "spi-nand": {
+        "size": "128m",
+        "partitions": {
+            "spl":        { "size": "1m" },
+            "env":        { "size": "256k" },
+            "env_r":      { "size": "256k" },
+            "os":         { "size": "4m" },
+            "os_r":       { "size": "4m" },
+            "rodata":     { "size": "12m" },
+            "rodata_r":   { "size": "12m" },
+            "data": {
+                "size": "40m",
+                "nftl": {
+                    "data": { "size": "-" }
+                }
+            },
+            "data_r": {
+                "size": "40m",
+                "nftl": {
+                    "data": { "size": "-" }
+                }
+            },
+            "refresh":    { "size": "1m" }
+        }
+    },
+    "image": {
+        "info": {
+            "platform": "d21x",
+            "product": "d213_demo128",
+            "version": "1.0.0",
+            "media": {
+                "type": "spi-nand",
+                "device_id": 0,
+                "array_organization": [
+                    { "page": "2k", "block": "128k", "oob": "64" }
+                ]
+            }
+        },
+        "updater": {
+            "ddr": {
+                "file": "usbupg-ddr-init.aic",
+                "attr": ["required", "run"],
+                "ram": "0x00103000"
+            },
+            "spl": {
+                "file": "bootloader.aic",
+                "attr": ["required", "run"],
+                "ram": "0x41000000"
+            }
+        },
+        "target": {
+            "spl": {
+                "file": "bootloader.aic",
+                "attr": ["mtd", "required"],
+                "part": ["spl"]
+            },
+            "env": {
+                "file": "env.bin",
+                "attr": ["mtd", "optional"],
+                "part": ["env"]
+            },
+            "env_r": {
+                "file": "env.bin",
+                "attr": ["mtd", "optional"],
+                "part": ["env_r"]
+            },
+            "os": {
+                "file": "d21x_os.itb",
+                "attr": ["mtd", "required"],
+                "part": ["os"]
+            }
+        }
+    },
+    "pre-process": {
+        "aicimage": {
+            "usbupg-ddr-init.aic": {
+                "head_ver": "0x00010001",
+                "resource": {
+                    "private": "ddr_init.bin",
+                    "pbp": "d21x.pbp"
+                }
+            },
+            "pbp_ext.aic": {
+                "head_ver": "0x00010001",
+                "resource": {
+                    "pbp": "d21x.pbp",
+                    "private": "ddr_init.bin"
+                },
+                "with_ext": "true"
+            },
+            // demo128 bootloader link address:
+            // 0x40000000 + 0x8000000 - 0x400000 (heap) - 0x7FF00 (text)
+            // = 0x47B80100; the AIC header starts 0x100 bytes earlier.
+            "loader.aic": {
+                "head_ver": "0x00010001",
+                "loader": {
+                    "file": "bootloader.bin",
+                    "load address": "0x47b80000",
+                    "entry point": "0x47b80100"
+                },
+                "resource": {
+                    "private": "ddr_init.bin"
+                }
+            }
+        },
+        "concatenate": {
+            "bootloader.aic": ["pbp_ext.aic", "loader.aic"]
+        },
+        "uboot_env": {
+            "env.bin": {
+                "file": "env.txt",
+                "size": "4096",
+                "redundant": "enable"
+            }
+        },
+        "elf2itb": {
+            "d21x_os.itb": {
+                "elf": "rtthread.elf",
+                "hash": ["crc32", "md5"]
+            }
+        }
+    }
+}

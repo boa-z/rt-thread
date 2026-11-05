@@ -1,0 +1,58 @@
+import os
+import subprocess
+import sys
+
+import rtconfig
+
+if os.getenv('RTT_ROOT'):
+    RTT_ROOT = os.getenv('RTT_ROOT')
+else:
+    RTT_ROOT = os.path.normpath(os.path.join(os.getcwd(), '..', '..', '..'))
+
+sys.path = sys.path + [os.path.join(RTT_ROOT, 'tools')]
+from building import *
+
+TARGET = 'rtthread.' + rtconfig.TARGET_EXT
+
+DefaultEnvironment(tools=[])
+env = Environment(tools=['mingw'],
+    AS=rtconfig.AS, ASFLAGS=rtconfig.AFLAGS,
+    CC=rtconfig.CC, CCFLAGS=rtconfig.CFLAGS,
+    CXX=rtconfig.CXX, CXXFLAGS=rtconfig.CXXFLAGS,
+    AR=rtconfig.AR, ARFLAGS='-rc',
+    LINK=rtconfig.LINK, LINKFLAGS=rtconfig.LFLAGS)
+env.PrependENVPath('PATH', rtconfig.EXEC_PATH)
+env['ASCOM'] = env['ASPPCOM']
+
+Export('RTT_ROOT')
+Export('rtconfig')
+
+def aic_tool_path(env, tool):
+    path = env.subst(tool)
+    if rtconfig.EXEC_PATH and not os.path.isabs(path):
+        path = os.path.join(rtconfig.EXEC_PATH, path)
+    if os.name == 'nt' and not path.lower().endswith('.exe'):
+        path += '.exe'
+    return path
+
+def aic_link_lds_action(target, source, env):
+    gcc = aic_tool_path(env, '$CC')
+    cmd = [gcc, '-E', '-P', '-x', 'c', '-I.', '-include', 'rtconfig.h',
+           'board/link.lds.S', '-o', str(target[0])]
+    ret = subprocess.call(cmd)
+    if ret != 0:
+        print('Failed to generate link.lds: %s' % ' '.join(cmd))
+    return ret
+
+link_lds = env.Command('link.lds',
+    ['board/link.lds.S', 'rtconfig.h', '.config'],
+    env.Action(aic_link_lds_action, 'GEN link.lds'))
+
+# D12p uses a BSP-local E9xx CPU port.  The generic libcpu/risc-v/common
+# trap entry targets a CLINT/PLIC core and is not used here.
+objs = PrepareBuilding(env, RTT_ROOT, has_libcpu=True)
+
+env.Depends(TARGET, link_lds)
+DoBuilding(TARGET, objs)
+
+Clean(TARGET, ['link.lds'])

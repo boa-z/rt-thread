@@ -1,0 +1,33 @@
+menu "Board options"
+
+config AIC_DRAM_TOTAL_SIZE
+    hex "DRAM total size"
+    default 0x8000000
+    help
+        Total DDR size of the D213 demo128 board.  The bootloader loads the
+        RT-Thread image at 0x40000000; the remaining DDR is used as heap.
+
+config AIC_INTERRUPT_STACK_SIZE
+    hex "Interrupt stack size"
+    default 0x2000
+
+config AIC_BOOTLOADER_RESERVED_SIZE
+    hex "Reserved DDR for the ArtInChip bootloader"
+    default 0x800000
+    help
+        The D213 bootloader is linked near the top of DDR.  Keep this
+        region out of the RT-Thread heap so that the bootloader image is
+        not overwritten while the OS is running.
+
+config BSP_UART_CLK_FREQ
+    int "UART input clock (Hz)"
+    default 48000000
+    help
+        Common UART input clock selected by the ArtInChip bootloader clock
+        tree.  All UART instances on the D213 demo128 board use 48 MHz.
+
+config BSP_CLINT_FREQ
+    int "CLINT timer frequency (Hz)"
+    default 4000000
+
+endmenu

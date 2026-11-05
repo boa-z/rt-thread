@@ -1,0 +1,345 @@
+/*
+ * Copyright (c) 2026, RT-Thread Development Team
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * ArtInChip D21x UART driver.
+ *
+ * The register layout and programming sequence are derived from the
+ * ArtInChip Luban-Lite HAL (bsp/artinchip/hal/uart/aic_hal_uart.c,
+ * Apache-2.0).  This is a small RT-Thread serial-v1 glue layer that
+ * keeps the BSP independent from the vendor OS abstraction layer.
+ *
+ * Supported instances on the demo128 board: UART0/1/2/4.  UART3/5/6/7
+ * can be built but require board-specific pinmux entries.
+ */
+
+#include <rthw.h>
+#include <rtthread.h>
+#include <rtdevice.h>
+#include <stdint.h>
+
+#include "board.h"
+
+#define UART_RBR   0x00
+#define UART_THR   0x00
+#define UART_DLL   0x00
+#define UART_DLH   0x04
+#define UART_IER   0x04
+#define UART_IIR   0x08
+#define UART_FCR   0x08
+#define UART_LCR   0x0C
+#define UART_MCR   0x10
+#define UART_LSR   0x14
+#define UART_USR   0x7C
+#define UART_RFL   0x84
+#define UART_RXCTL 0xA0
+
+#define UART_LSR_DR   0x01
+#define UART_LSR_OE   0x02
+#define UART_LSR_PE   0x04
+#define UART_LSR_FE   0x08
+#define UART_LSR_BI   0x10
+#define UART_LSR_THRE 0x20
+#define UART_LSR_TEMT 0x40
+
+#define UART_IER_RDA      0x01
+#define UART_FCR_ENABLE   0x01
+#define UART_FCR_RX_RESET 0x02
+#define UART_FCR_TX_RESET 0x04
+#define UART_FCR_RX_TRIG  (3U << 6)
+#define UART_FCR_TX_TRIG  (3U << 4)
+#define UART_LCR_DLAB     0x80
+#define UART_LCR_STOP     0x04
+#define UART_LCR_PARITY   0x08
+#define UART_LCR_EVEN     0x10
+#define UART_LCR_8N1      0x03
+#define UART_RXCTL_ENABLE 0x01
+
+#define UART_IIR_NO_INT     0x01
+#define UART_IIR_RX_DATA    0x04
+#define UART_IIR_RX_TIMEOUT 0x0C
+#define UART_IIR_LINE_STAT  0x06
+
+struct aic_uart
+{
+    uint32_t base;
+    uint32_t irq;
+    uint32_t clk;
+    struct rt_serial_device serial;
+};
+
+#define AIC_UART_INSTANCE(n)                                             \
+    {                                                                    \
+        .base = AIC_UART_BASE(n),                                        \
+        .irq = AIC_UART_IRQ(n),                                          \
+        .clk = AIC_UART_CLK_FREQ,                                        \
+    }
+
+#ifdef BSP_USING_UART0
+static struct aic_uart aic_uart0 = AIC_UART_INSTANCE(0);
+#endif
+#ifdef BSP_USING_UART1
+static struct aic_uart aic_uart1 = AIC_UART_INSTANCE(1);
+#endif
+#ifdef BSP_USING_UART2
+static struct aic_uart aic_uart2 = AIC_UART_INSTANCE(2);
+#endif
+#ifdef BSP_USING_UART3
+static struct aic_uart aic_uart3 = AIC_UART_INSTANCE(3);
+#endif
+#ifdef BSP_USING_UART4
+static struct aic_uart aic_uart4 = AIC_UART_INSTANCE(4);
+#endif
+#ifdef BSP_USING_UART5
+static struct aic_uart aic_uart5 = AIC_UART_INSTANCE(5);
+#endif
+#ifdef BSP_USING_UART6
+static struct aic_uart aic_uart6 = AIC_UART_INSTANCE(6);
+#endif
+#ifdef BSP_USING_UART7
+static struct aic_uart aic_uart7 = AIC_UART_INSTANCE(7);
+#endif
+
+static inline uint32_t uart_read(struct aic_uart *uart, uint32_t reg)
+{
+    return *(volatile uint32_t *)(uintptr_t)(uart->base + reg);
+}
+
+static inline void uart_write(struct aic_uart *uart, uint32_t reg, uint32_t value)
+{
+    *(volatile uint32_t *)(uintptr_t)(uart->base + reg) = value;
+}
+
+static uint32_t aic_uart_lcr(const struct serial_configure *cfg)
+{
+    uint32_t lcr;
+
+    switch (cfg->data_bits)
+    {
+    case DATA_BITS_5:
+        lcr = 0;
+        break;
+    case DATA_BITS_6:
+        lcr = 1;
+        break;
+    case DATA_BITS_7:
+        lcr = 2;
+        break;
+    default:
+        lcr = UART_LCR_8N1;
+        break;
+    }
+
+    if (cfg->stop_bits == STOP_BITS_2)
+        lcr |= UART_LCR_STOP;
+
+    if (cfg->parity == PARITY_ODD)
+        lcr |= UART_LCR_PARITY;
+    else if (cfg->parity == PARITY_EVEN)
+        lcr |= UART_LCR_PARITY | UART_LCR_EVEN;
+
+    return lcr;
+}
+
+static rt_err_t aic_uart_configure(struct rt_serial_device *serial,
+                                   struct serial_configure *cfg)
+{
+    struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
+    uint32_t divisor;
+    uint32_t ier;
+    uint32_t lcr;
+
+    if (cfg->baud_rate == 0 || uart->clk == 0)
+    {
+        return -RT_EINVAL;
+    }
+
+    divisor = (uart->clk + (cfg->baud_rate * 8)) / (cfg->baud_rate * 16);
+    if (divisor == 0)
+    {
+        divisor = 1;
+    }
+
+    lcr = aic_uart_lcr(cfg);
+
+    /* Disable interrupts while changing the divisor, then restore them. */
+    ier = uart_read(uart, UART_IER);
+    uart_write(uart, UART_IER, 0);
+
+    uart_write(uart, UART_LCR, lcr | UART_LCR_DLAB);
+    uart_write(uart, UART_DLL, divisor & 0xff);
+    uart_write(uart, UART_DLH, (divisor >> 8) & 0xff);
+    uart_write(uart, UART_LCR, lcr);
+
+    /* RS-232 mode, no modem flow control. */
+    uart_write(uart, UART_MCR, 0);
+
+    /* Enable and reset FIFOs, 1/2 RX trigger. */
+    uart_write(uart, UART_FCR, UART_FCR_ENABLE | UART_FCR_RX_RESET |
+                               UART_FCR_TX_RESET | UART_FCR_RX_TRIG |
+                               UART_FCR_TX_TRIG);
+
+    /* Enable the receiver and restore the interrupt mask. */
+    uart_write(uart, UART_RXCTL, UART_RXCTL_ENABLE);
+    uart_write(uart, UART_IER, ier);
+
+    return RT_EOK;
+}
+
+static rt_err_t aic_uart_control(struct rt_serial_device *serial,
+                                 int cmd, void *arg)
+{
+    struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
+    uint32_t ier;
+
+    switch (cmd)
+    {
+    case RT_DEVICE_CTRL_CLR_INT:
+        ier = uart_read(uart, UART_IER);
+        ier &= ~UART_IER_RDA;
+        uart_write(uart, UART_IER, ier);
+        rt_hw_interrupt_mask(uart->irq);
+        break;
+
+    case RT_DEVICE_CTRL_SET_INT:
+        ier = uart_read(uart, UART_IER);
+        ier |= UART_IER_RDA;
+        uart_write(uart, UART_IER, ier);
+        rt_hw_interrupt_umask(uart->irq);
+        break;
+
+    case RT_DEVICE_CTRL_CONFIG:
+        if (arg)
+        {
+            return aic_uart_configure(serial, (struct serial_configure *)arg);
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return RT_EOK;
+}
+
+static int aic_uart_putc(struct rt_serial_device *serial, char c)
+{
+    struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
+
+    while (!(uart_read(uart, UART_LSR) & UART_LSR_THRE));
+
+    uart_write(uart, UART_THR, (uint8_t)c);
+    return 1;
+}
+
+static int aic_uart_getc(struct rt_serial_device *serial)
+{
+    struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
+    uint32_t lsr;
+
+    lsr = uart_read(uart, UART_LSR);
+    if (lsr & (UART_LSR_OE | UART_LSR_PE | UART_LSR_FE | UART_LSR_BI))
+    {
+        /* Reading LSR clears the error flags.  The byte, if any, is still
+         * consumed below. */
+    }
+
+    if (lsr & UART_LSR_DR)
+    {
+        return (int)(uart_read(uart, UART_RBR) & 0xff);
+    }
+
+    return -1;
+}
+
+static const struct rt_uart_ops aic_uart_ops = {
+    .configure = aic_uart_configure,
+    .control = aic_uart_control,
+    .putc = aic_uart_putc,
+    .getc = aic_uart_getc,
+    .dma_transmit = RT_NULL,
+};
+
+static void aic_uart_isr(int vector, void *param)
+{
+    struct aic_uart *uart = (struct aic_uart *)param;
+    uint32_t iir;
+
+    (void)vector;
+
+    for (;;)
+    {
+        iir = uart_read(uart, UART_IIR);
+        if (iir & UART_IIR_NO_INT)
+        {
+            break;
+        }
+
+        switch (iir & 0x0f)
+        {
+        case UART_IIR_RX_DATA:
+        case UART_IIR_RX_TIMEOUT:
+            rt_hw_serial_isr(&uart->serial, RT_SERIAL_EVENT_RX_IND);
+            break;
+
+        case UART_IIR_LINE_STAT:
+            /* Reading LSR clears the line-status interrupt. */
+            (void)uart_read(uart, UART_LSR);
+            break;
+
+        default:
+            /* No TX interrupt is enabled by this driver. */
+            break;
+        }
+    }
+}
+
+static void aic_uart_register(struct aic_uart *uart, const char *name)
+{
+    struct serial_configure config = RT_SERIAL_CONFIG_DEFAULT;
+    uint32_t ier;
+
+    uart->serial.ops = &aic_uart_ops;
+    uart->serial.config = config;
+
+    rt_hw_serial_register(&uart->serial, name,
+                          RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_INT_RX,
+                          uart);
+
+    rt_hw_interrupt_install(uart->irq, aic_uart_isr, uart, name);
+    rt_hw_interrupt_umask(uart->irq);
+
+    /* The PLIC is unmasked above; enable the controller RX interrupt. */
+    ier = uart_read(uart, UART_IER);
+    ier |= UART_IER_RDA;
+    uart_write(uart, UART_IER, ier);
+}
+
+void rt_hw_serial_init(void)
+{
+#ifdef BSP_USING_UART0
+    aic_uart_register(&aic_uart0, "uart0");
+#endif
+#ifdef BSP_USING_UART1
+    aic_uart_register(&aic_uart1, "uart1");
+#endif
+#ifdef BSP_USING_UART2
+    aic_uart_register(&aic_uart2, "uart2");
+#endif
+#ifdef BSP_USING_UART3
+    aic_uart_register(&aic_uart3, "uart3");
+#endif
+#ifdef BSP_USING_UART4
+    aic_uart_register(&aic_uart4, "uart4");
+#endif
+#ifdef BSP_USING_UART5
+    aic_uart_register(&aic_uart5, "uart5");
+#endif
+#ifdef BSP_USING_UART6
+    aic_uart_register(&aic_uart6, "uart6");
+#endif
+#ifdef BSP_USING_UART7
+    aic_uart_register(&aic_uart7, "uart7");
+#endif
+}

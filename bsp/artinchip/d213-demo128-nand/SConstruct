@@ -1,0 +1,92 @@
+import os
+import subprocess
+import sys
+
+import rtconfig
+
+if os.getenv('RTT_ROOT'):
+    RTT_ROOT = os.getenv('RTT_ROOT')
+else:
+    RTT_ROOT = os.path.normpath(os.path.join(os.getcwd(), '..', '..', '..'))
+
+sys.path = sys.path + [os.path.join(RTT_ROOT, 'tools')]
+from building import *
+
+TARGET = 'rtthread.' + rtconfig.TARGET_EXT
+
+DefaultEnvironment(tools=[])
+env = Environment(tools=['mingw'],
+    AS=rtconfig.AS, ASFLAGS=rtconfig.AFLAGS,
+    CC=rtconfig.CC, CCFLAGS=rtconfig.CFLAGS,
+    CXX=rtconfig.CXX, CXXFLAGS=rtconfig.CXXFLAGS,
+    AR=rtconfig.AR, ARFLAGS='-rc',
+    LINK=rtconfig.LINK, LINKFLAGS=rtconfig.LFLAGS)
+env.PrependENVPath('PATH', rtconfig.EXEC_PATH)
+env['ASCOM'] = env['ASPPCOM']
+
+Export('RTT_ROOT')
+Export('rtconfig')
+
+def aic_tool_path(env, tool):
+    """Return a target toolchain executable with the Windows .exe suffix."""
+    path = env.subst(tool)
+    if rtconfig.EXEC_PATH and not os.path.isabs(path):
+        path = os.path.join(rtconfig.EXEC_PATH, path)
+    if os.name == 'nt' and not path.lower().endswith('.exe'):
+        path += '.exe'
+    return path
+
+def aic_link_lds_action(target, source, env):
+    """
+    Preprocess board/link.lds.S with the target compiler.
+
+    This runs only when link.lds is needed by an actual build, so
+    menuconfig/pyconfig/help/clean do not require a cross compiler.
+    """
+    gcc = aic_tool_path(env, '$CC')
+    cmd = [gcc, '-E', '-P', '-x', 'c', '-I.', '-include', 'rtconfig.h',
+           'board/link.lds.S', '-o', str(target[0])]
+    ret = subprocess.call(cmd)
+    if ret != 0:
+        print('Failed to generate link.lds: %s' % ' '.join(cmd))
+    return ret
+
+link_lds = env.Command('link.lds',
+    ['board/link.lds.S', 'rtconfig.h', '.config'],
+    env.Action(aic_link_lds_action, 'GEN link.lds'))
+
+def aic_link_action(target, source, env):
+    """
+    Link through a GCC response file.
+
+    LVGL and other optional components can push the Windows command line
+    over its length limit.  The response file is generated under build/
+    and is removed by a clean build.
+    """
+    rsp = os.path.join('build', 'link.rsp')
+    os.makedirs('build', exist_ok=True)
+    with open(rsp, 'w') as f:
+        for item in source:
+            path = getattr(item, 'abspath', str(item))
+            f.write('"%s"\n' % str(path).replace('\\', '/'))
+
+    linker = aic_tool_path(env, '$LINK')
+
+    target_path = getattr(target[0], 'abspath', str(target[0]))
+    cmd = [linker] + env.subst('$LINKFLAGS').split() + \
+          ['-o', str(target_path), '@' + rsp]
+    libflags = env.subst('$_LIBFLAGS')
+    if libflags:
+        cmd += libflags.split()
+    ret = subprocess.call(cmd)
+    if ret != 0:
+        print('Link failed: %s' % ' '.join(cmd))
+    return ret
+
+env.Replace(LINKCOM=aic_link_action)
+
+objs = PrepareBuilding(env, RTT_ROOT, has_libcpu=False)
+DoBuilding(TARGET, objs)
+
+env.Depends(TARGET, link_lds)
+Clean(TARGET, [link_lds, os.path.join('build', 'link.rsp')])

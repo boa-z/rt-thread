@@ -1,0 +1,13 @@
+import os
+from building import *
+
+cwd = GetCurrentDir()
+objs = []
+items = os.listdir(cwd)
+
+for item in items:
+    path = os.path.join(cwd, item)
+    if os.path.isfile(os.path.join(path, 'SConscript')):
+        objs += SConscript(os.path.join(item, 'SConscript'))
+
+Return('objs')
