@@ -1,0 +1,11 @@
+menu "D126 board options"
+
+config BSP_UART0_BAUD
+    int "UART0 console baudrate"
+    default 115200
+
+config BSP_USING_SELFTEST
+    bool "Enable boot self-test"
+    default y
+
+endmenu

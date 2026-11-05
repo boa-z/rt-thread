@@ -1,0 +1,46 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = []
+CPPPATH = [cwd + '/include']
+
+gpio = GetDepend('BSP_USING_GPIO')
+i2c = (GetDepend('BSP_USING_I2C0') or GetDepend('BSP_USING_I2C1') or
+       GetDepend('BSP_USING_I2C2') or GetDepend('BSP_USING_I2C3'))
+can = GetDepend('BSP_USING_CAN0') or GetDepend('BSP_USING_CAN1')
+pwm = GetDepend('BSP_USING_PWM')
+wdt = GetDepend('BSP_USING_WDT')
+rtc = GetDepend('BSP_USING_RTC')
+display = GetDepend('BSP_USING_DISPLAY')
+ge = GetDepend('BSP_USING_GE')
+
+if gpio or display:
+    src += ['hal/aic_hal_gpio.c']
+if i2c:
+    src += ['hal/hal_i2c.c']
+if can:
+    src += ['hal/aic_hal_can.c']
+if pwm:
+    src += ['hal/hal_pwm.c']
+if wdt:
+    src += ['hal/hal_wdt.c']
+if rtc:
+    src += ['hal/hal_rtc.c']
+
+if display:
+    src += ['display/aic_hal_de.c']
+    src += ['port/aic_disp_clk.c']
+
+if ge:
+    src += ['ge/hal_ge_normal.c']
+    src += ['ge/hal_ge_hw.c']
+
+if display or ge:
+    src += ['port/aic_hal_reset.c']
+
+if gpio or i2c or can or pwm or wdt or rtc or display or ge:
+    src += ['port/aic_hal_clk.c']
+
+group = DefineGroup('ArtInChipHAL', src, depend=[''], CPPPATH=CPPPATH)
+
+Return('group')

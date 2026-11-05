@@ -1,0 +1,10 @@
+menu "Onboard peripheral options"
+
+config BSP_USING_GPIO
+    bool "Enable GPIO pin driver"
+    default y
+
+# UART/I2C/SPI/WDT/RTC/CAN FD drivers will be added here after the
+# minimal console/tick bring-up is verified on hardware.
+
+endmenu

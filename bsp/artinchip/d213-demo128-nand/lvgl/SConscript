@@ -1,0 +1,24 @@
+import os
+
+from building import *
+
+cwd = GetCurrentDir()
+objs = []
+
+if GetDepend('BSP_USING_LVGL'):
+    component_dir = os.environ.get('LVGL_AIC_DIR')
+    if not component_dir:
+        raise RuntimeError(
+            'BSP_USING_LVGL requires LVGL_AIC_DIR to point to '
+            'lvgl-aic-standalone')
+    component_dir = os.path.abspath(component_dir)
+    component_scons = os.path.join(component_dir, 'SConscript')
+    if not os.path.isfile(component_scons):
+        raise RuntimeError(
+            'lvgl-aic-standalone SConscript not found at %s' % component_dir)
+
+    os.environ.setdefault('LVGL_AIC_BSP_DIR', os.path.abspath(
+        os.path.join(cwd, '..')))
+    objs += SConscript(component_scons)
+
+Return('objs')

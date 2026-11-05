@@ -1,0 +1,360 @@
+menu "On-chip Peripheral Drivers"
+
+config BSP_USING_GPIO
+    bool "Enable GPIO / pin device"
+    default y
+    select RT_USING_PIN
+    help
+        Enables the standard RT-Thread pin device ("gpio") on top of the
+        ArtInChip GPIO HAL.  Pin names use the PA.n ... PH.n form.
+
+menu "UART"
+
+config BSP_USING_UART0
+    bool "Enable UART0 (console)"
+    default y
+    select RT_USING_SERIAL
+
+config BSP_USING_UART1
+    bool "Enable UART1 (PA.4/PA.5)"
+    default y
+    select RT_USING_SERIAL
+
+config BSP_USING_UART2
+    bool "Enable UART2 (PA.8/PA.9, shared with I2C2)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART3
+    bool "Enable UART3 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART4
+    bool "Enable UART4 (PB.6/PB.7, shared with SDMC0/QSPI0)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART5
+    bool "Enable UART5 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART6
+    bool "Enable UART6 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART7
+    bool "Enable UART7 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+endmenu
+
+menu "I2C"
+
+config BSP_USING_I2C0
+    bool "Enable I2C0 (PD.6/PD.7)"
+    default n
+    select RT_USING_I2C
+
+config BSP_USING_I2C1
+    bool "Enable I2C1 (PD.18/PD.19)"
+    default n
+    select RT_USING_I2C
+
+config BSP_USING_I2C2
+    bool "Enable I2C2 (PA.8/PA.9, shared with UART2)"
+    default n
+    select RT_USING_I2C
+
+config BSP_USING_I2C3
+    bool "Enable I2C3 (PA.10/PA.11, touch controller)"
+    default y
+    select RT_USING_I2C
+
+if BSP_USING_I2C0
+config BSP_I2C0_SPEED
+    int "I2C0 bus speed (Hz)"
+    default 400000
+config BSP_I2C0_10BIT
+    bool "I2C0 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C1
+config BSP_I2C1_SPEED
+    int "I2C1 bus speed (Hz)"
+    default 400000
+config BSP_I2C1_10BIT
+    bool "I2C1 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C2
+config BSP_I2C2_SPEED
+    int "I2C2 bus speed (Hz)"
+    default 400000
+config BSP_I2C2_10BIT
+    bool "I2C2 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C3
+config BSP_I2C3_SPEED
+    int "I2C3 bus speed (Hz)"
+    default 400000
+config BSP_I2C3_10BIT
+    bool "I2C3 uses 10-bit addresses"
+    default n
+endif
+
+endmenu
+
+menu "Touch"
+
+config BSP_USING_TOUCH_GT911
+    bool "Enable GT911 capacitive touch (I2C3)"
+    default y
+    depends on BSP_USING_I2C3 && BSP_USING_GPIO
+    select RT_USING_TOUCH
+    select RT_TOUCH_PIN_IRQ
+    help
+        Enables the GT911 touch controller on I2C3.  The D213EC-DEMO-V4-0
+        uses PA.8 for reset and PA.9 for interrupt.
+
+if BSP_USING_TOUCH_GT911
+config BSP_TOUCH_GT911_I2C_BUS
+    string "GT911 I2C bus name"
+    default "i2c3"
+
+config BSP_TOUCH_GT911_RST_PIN
+    string "GT911 reset pin"
+    default "PA.8"
+
+config BSP_TOUCH_GT911_INT_PIN
+    string "GT911 interrupt pin"
+    default "PA.9"
+
+config BSP_TOUCH_GT911_X_RANGE
+    int "GT911 X coordinate range"
+    default 1024
+
+config BSP_TOUCH_GT911_Y_RANGE
+    int "GT911 Y coordinate range"
+    default 600
+endif
+
+endmenu
+
+menu "CAN"
+
+config BSP_USING_CAN0
+    bool "Enable CAN0 (classic CAN 2.0A/B, PE.16/PE.17)"
+    default y
+    select RT_USING_CAN
+    help
+        Enables the D21x classic CAN controller.  CAN FD is not supported
+        by this hardware.
+
+config BSP_USING_CAN1
+    bool "Enable CAN1 (classic CAN 2.0A/B, PE.18/PE.19)"
+    default y
+    select RT_USING_CAN
+    help
+        Enables the D21x classic CAN controller.  CAN FD is not supported
+        by this hardware.
+
+endmenu
+
+config BSP_USING_PWM
+    bool "Enable PWM (4 channels, PC.0..PC.7)"
+    default y
+    select RT_USING_PWM
+    help
+        PWM0-2 are routed to PC.0-PC.5 by the board pinmux.  PWM3 shares
+        PC.6/PC.7 with other functions; PC.7 is the panel enable GPIO, so
+        do not use PWM3 while the display is enabled.
+
+config BSP_USING_WDT
+    bool "Enable watchdog"
+    default y
+    select RT_USING_WDT
+
+config BSP_USING_RTC
+    bool "Enable RTC"
+    default y
+    select RT_USING_RTC
+
+config BSP_USING_PERIPH_TEST
+    bool "Enable peripheral MSH test commands"
+    default y
+    depends on BSP_USING_I2C0 || BSP_USING_I2C1 || BSP_USING_I2C2 || BSP_USING_I2C3 || \
+               BSP_USING_CAN0 || BSP_USING_CAN1 || BSP_USING_PWM || BSP_USING_WDT || \
+               BSP_USING_RTC || BSP_USING_GPIO || BSP_USING_DISPLAY || BSP_USING_GE
+
+menu "Display"
+
+config BSP_USING_DISPLAY
+    bool "Enable D21x DE + LVDS framebuffer"
+    default y
+    help
+        Enables the Display Engine UI layer, LVDS output and the RT-Thread
+        graphic device named "lcd".  The framebuffer is carved out of the
+        top of the non-bootloader DDR area.
+
+config BSP_DISPLAY_WIDTH
+    int "Panel width"
+    default 1024
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HEIGHT
+    int "Panel height"
+    default 600
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PIXCLOCK
+    int "Panel pixel clock (Hz)"
+    default 52000000
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HFP
+    int "Horizontal front porch"
+    default 160
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HBP
+    int "Horizontal back porch"
+    default 160
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HSW
+    int "Horizontal sync width"
+    default 20
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VFP
+    int "Vertical front porch"
+    default 20
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VBP
+    int "Vertical back porch"
+    default 12
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VSW
+    int "Vertical sync width"
+    default 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_LVDS_LINK
+    int "LVDS link (0=link0 PD.18-27, 1=link1 PD.8-17)"
+    default 1
+    range 0 1
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_LVDS_MODE
+    int "LVDS data mapping (0=VESA24, 1=JEIDA24, 2=JEIDA18)"
+    default 0
+    range 0 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_FB_COUNT
+    int "Framebuffer count (1=single, 2=double)"
+    default 2
+    range 1 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PANEL_ENABLE_GPIO
+    string "Panel enable/backlight GPIO"
+    default "PC.7"
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PANEL_ENABLE_LOW
+    bool "Panel enable GPIO is active low"
+    default n
+    depends on BSP_USING_DISPLAY
+
+config AIC_FB_RESERVED_SIZE
+    hex "DDR reserved for framebuffers"
+    default 0x2000000 if BSP_USING_DISPLAY
+    default 0x0
+    help
+        The reserved region is taken from the top of the non-bootloader
+        DDR area, below the 8 MB Bootloader reserve.  It is not part of the
+        RT-Thread heap.
+
+config BSP_USING_LVGL
+    bool "Enable lvgl-aic-standalone (external LVGL 9.6)"
+    default n
+    depends on BSP_USING_DISPLAY
+    help
+        Builds the external lvgl-aic-standalone component.  The BSP does
+        not contain the LVGL runtime, display/input port or demo.  Set
+        LVGL_AIC_DIR and LVGL_DIR before building.
+
+if BSP_USING_LVGL
+config LVGL_AIC_USE_D21X_BACKEND
+    bool "Use D21x double-buffer/PAN/VSync backend"
+    default y
+
+config LVGL_AIC_USE_GE_COPY
+    bool "Use GE Normal bitblt for the LVGL frame copy"
+    default n
+    depends on LVGL_AIC_USE_D21X_BACKEND && BSP_USING_GE
+    help
+        Software frame copy is the validated baseline.  Enable this only
+        after the software-rendered display path has been verified.
+
+config LVGL_AIC_USE_TOUCH
+    bool "Use an RT-Thread touch device as LVGL pointer input"
+    default y
+    depends on BSP_USING_TOUCH_GT911
+
+if LVGL_AIC_USE_TOUCH
+config LVGL_AIC_TOUCH_DEVICE
+    string "LVGL touch device name"
+    default "gt911"
+
+config LVGL_AIC_TOUCH_SWAP_XY
+    bool "Swap LVGL touch X/Y axes"
+    default n
+
+config LVGL_AIC_TOUCH_X_FLIP
+    bool "Flip LVGL touch X axis"
+    default n
+
+config LVGL_AIC_TOUCH_Y_FLIP
+    bool "Flip LVGL touch Y axis"
+    default n
+endif
+
+config LVGL_AIC_DEMO_SMOKE
+    bool "Build the D213 LVGL smoke demo"
+    default y
+
+config LVGL_AIC_UI_STACK_SIZE
+    int "LVGL UI thread stack size"
+    default 32768
+
+config LVGL_AIC_UI_PRIORITY
+    int "LVGL UI thread priority"
+    default 15
+
+config LVGL_AIC_UI_PERIOD_MS
+    int "LVGL UI loop period (ms)"
+    default 10
+endif
+
+endmenu
+
+config BSP_USING_GE
+    bool "Enable GE Normal mode (fill/blit/scale/blend/rotate)"
+    default y
+    help
+        Enables the vendor GE Normal-mode HAL.  The GE CMD queue is not
+        used on D21x.
+
+endmenu
