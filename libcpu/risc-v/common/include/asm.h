@@ -56,8 +56,8 @@
 
 .macro SAVE_ALL
 #ifdef ARCH_RISCV_FPU
-    /* Reserve float registers */
-    addi    sp, sp, -CTX_FPU_REG_NR * SZREG
+    /* Reserve float registers and fcsr */
+    addi    sp, sp, -(CTX_FPU_REG_NR + CTX_FCSR_REG_NR) * SZREG
 #endif
 #ifdef ARCH_RISCV_VECTOR
     /* Reserve float registers */
@@ -151,6 +151,11 @@
     CTX_FREG_S  f30, FPU_CTX_F30_OFF(t1)
     CTX_FREG_S  f31, FPU_CTX_F31_OFF(t1)
 
+#if CTX_FCSR_REG_NR
+    csrr    t0, 0x003
+    REG_S   t0, (CTX_FPU_REG_NR * SZREG)(t1)
+#endif
+
     /* Clean FS domain */
     csrc    CSR_STATUS, t0
 
@@ -166,7 +171,7 @@
     beqz    t0, 0f
 
     /* push vector frame */
-    addi    t1, sp, (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR) * SZREG
+    addi    t1, sp, (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_FCSR_REG_NR) * SZREG
 
     SAVE_VECTOR t1
 0:
@@ -195,7 +200,7 @@
     beqz    t0, 0f
 
     /* Restore vector frame */
-    addi    t1, sp, (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR) * SZREG
+    addi    t1, sp, (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_FCSR_REG_NR) * SZREG
 
     RESTORE_VECTOR t1
 0:
@@ -239,6 +244,11 @@
     CTX_FREG_L  f29, FPU_CTX_F29_OFF(t2)
     CTX_FREG_L  f30, FPU_CTX_F30_OFF(t2)
     CTX_FREG_L  f31, FPU_CTX_F31_OFF(t2)
+
+#if CTX_FCSR_REG_NR
+    REG_L   t0, (CTX_FPU_REG_NR * SZREG)(t2)
+    csrw    0x003, t0
+#endif
 
     /* Clean FS domain */
     csrc    CSR_STATUS, t0

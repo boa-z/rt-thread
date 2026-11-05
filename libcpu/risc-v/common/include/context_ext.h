@@ -19,8 +19,14 @@
 #endif
 /* Number of XLEN-sized stack slots occupied by 32 floating-point registers. */
 #define CTX_FPU_REG_NR  (32 * __riscv_flen / __riscv_xlen)
+#if defined(ARCH_RISCV_VECTOR)
+#define CTX_FCSR_REG_NR 0
+#else
+#define CTX_FCSR_REG_NR 1
+#endif
 #else
 #define CTX_FPU_REG_NR  0
+#define CTX_FCSR_REG_NR 0
 #endif
 
 #ifdef __ASSEMBLY__

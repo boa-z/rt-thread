@@ -46,7 +46,7 @@
     #define CTX_GENERAL_REG_NR          34
     #define FRAME_OFF_SP                (33 * SZREG)
 #endif
-#define CTX_ALL_REG_NR                  (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_VECTOR_REG_NR)
+#define CTX_ALL_REG_NR                  (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_FCSR_REG_NR + CTX_VECTOR_REG_NR)
 
 #define FRAME_OFF_XSTATUS               (2 * SZREG)
 #define FRAME_OFF_XCAUSE                (3 * SZREG)
@@ -132,6 +132,9 @@ struct rt_hw_stack_frame
 
 #ifdef ARCH_RISCV_FPU
     rt_ubase_t f[CTX_FPU_REG_NR];   /* f0~f31 */
+#if CTX_FCSR_REG_NR
+    rt_ubase_t fcsr;
+#endif
 #endif
 #ifdef ARCH_RISCV_VECTOR
     rt_ubase_t v[CTX_VECTOR_REG_NR];
