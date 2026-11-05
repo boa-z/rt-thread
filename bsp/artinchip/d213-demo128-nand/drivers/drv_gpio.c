@@ -15,6 +15,7 @@
 
 #include <rtthread.h>
 #include <rtdevice.h>
+#include <interrupt.h>
 
 #include "aic_hal_gpio.h"
 
@@ -209,8 +210,8 @@ static rt_err_t aic_gpio_attach_irq(struct rt_device *device, rt_base_t pin,
 
     if (!(aic_gpio_group_installed & (1U << group)))
     {
-        rt_hw_interrupt_install(GPIO_IRQn + group, aic_gpio_group_isr,
-                                RT_NULL, "gpio");
+        rt_hw_interrupt_install(IRQ_PLIC(GPIO_IRQn + group),
+                                aic_gpio_group_isr, RT_NULL, "gpio");
         aic_gpio_group_installed |= (1U << group);
     }
 
@@ -254,7 +255,7 @@ static rt_err_t aic_gpio_irq_enable(struct rt_device *device, rt_base_t pin,
         if (aic_gpio_irq[group][offset].handler == RT_NULL)
             return -RT_EINVAL;
         hal_gpio_enable_irq(group, offset);
-        rt_hw_interrupt_umask(GPIO_IRQn + group);
+        rt_hw_interrupt_umask(IRQ_PLIC(GPIO_IRQn + group));
     }
     else
     {

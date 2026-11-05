@@ -17,7 +17,7 @@
 #include <string.h>
 
 #include "board.h"
-#include "cache.h"
+#include "aic_cache.h"
 #include "drv_ge.h"
 #include "aic_hal_ge.h"
 

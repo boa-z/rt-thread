@@ -16,6 +16,15 @@
 #define __BOARD_H__
 
 #include <rtthread.h>
+#include <interrupt.h>
+
+#ifndef MAX_HANDLERS
+#define MAX_HANDLERS              128
+#endif
+
+#ifndef INTC_TYPE
+#define INTC_TYPE                 INTC_TYPE_RISCV
+#endif
 
 #define AIC_DRAM_BASE             0x40000000UL
 
@@ -37,5 +46,6 @@
 void aic_board_sysclk_init(void);
 void aic_board_pinmux_init(void);
 void aic_board_uart0_init(void);
+void aic_plic_quirk_init(void);
 
 #endif /* __BOARD_H__ */

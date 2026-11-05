@@ -17,6 +17,7 @@
 
 #include <rtthread.h>
 #include <rtdevice.h>
+#include <interrupt.h>
 #include <string.h>
 
 #include "aic_hal_can.h"
@@ -305,6 +306,9 @@ static int aic_can_register(struct aic_can *aic)
         rt_kprintf("%s: HAL init failed\n", aic->name);
         return -RT_ERROR;
     }
+
+    /* Translate the SoC PLIC hardware IRQ to the RT-Thread handler index. */
+    aic->handle.irq_num = IRQ_PLIC(aic->handle.irq_num);
 
     aic->handle.autoBusoff = 1;
     hal_can_attach_callback(&aic->handle, aic_can_callback, RT_NULL);

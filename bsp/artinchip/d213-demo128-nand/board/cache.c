@@ -13,7 +13,7 @@
 #include <stddef.h>
 
 #include "board.h"
-#include "cache.h"
+#include "aic_cache.h"
 
 #define AIC_CACHE_LINE_SIZE 64UL
 
