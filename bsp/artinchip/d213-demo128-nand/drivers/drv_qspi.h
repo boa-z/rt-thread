@@ -19,6 +19,9 @@ extern "C" {
  */
 rt_err_t rt_hw_qspi0_init(void);
 
+/* Read-only QSPI0 register dump for diagnostics. */
+void rt_hw_qspi0_dump(void);
+
 #ifdef __cplusplus
 }
 #endif

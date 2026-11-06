@@ -204,14 +204,6 @@ static void qspi_set_bus_freq(rt_uint32_t bus_hz)
     qspi_set_clk_div(sel, div);
     cal = (sel == 1) ? (aic_qspi0.sclk / (2U * (div + 1U))) : (aic_qspi0.sclk >> div);
 
-    /* RX sampling delay: none <=24MHz, half <=60MHz, one cycle above.
-     * Same policy as qspi_hw_freq_to_delay_mode(). */
-    qspi_clr_bits(QSPI_REG_TCFG, TCFG_RXINDLY_EN | TCFG_RXDLY_DIS);
-    if (cal <= 24000000UL)
-        qspi_set_bits(QSPI_REG_TCFG, TCFG_RXDLY_DIS);
-    else if (cal > 60000000UL)
-        qspi_set_bits(QSPI_REG_TCFG, TCFG_RXINDLY_EN);
-
     aic_qspi0.bus_hz = bus_hz;
     aic_qspi0.actual_hz = cal;
 }
@@ -493,6 +485,13 @@ static void qspi_hw_init(rt_uint32_t bus_hz)
     qspi_write(QSPI_REG_FCTL, val);
 
     qspi_set_bus_freq(bus_hz);
+
+    /*
+     * D21x demo128-nand uses the vendor default AIC_DEV_QSPI0_DELAY_MODE=2
+     * (half-cycle RX sampling).  Do not use RXDLY_DIS here: sampling on the
+     * raw SCK edge reads 0xFF from the NAND and makes STATUS.BUSY stick.
+     */
+    qspi_clr_bits(QSPI_REG_TCFG, TCFG_RXINDLY_EN | TCFG_RXDLY_DIS);
 }
 
 static rt_err_t qspi_configure(struct rt_spi_device *device,
@@ -692,9 +691,22 @@ static const struct rt_spi_ops aic_qspi_ops =
     .xfer = qspi_xfer,
 };
 
-rt_err_t rt_hw_qspi0_init(void)
+void rt_hw_qspi0_dump(void)
 {
-    rt_err_t ret;
+    rt_kprintf("qspi0: CFG=0x%08x TCFG=0x%08x CCFG=0x%08x\n",
+               (unsigned int)qspi_read(QSPI_REG_CFG),
+               (unsigned int)qspi_read(QSPI_REG_TCFG),
+               (unsigned int)qspi_read(QSPI_REG_CCFG));
+    rt_kprintf("qspi0: ISTS=0x%08x FSTS=0x%08x TBC=0x%08x TWC=0x%08x TMC=0x%08x\n",
+               (unsigned int)qspi_read(QSPI_REG_ISTS),
+               (unsigned int)qspi_read(QSPI_REG_FSTS),
+               (unsigned int)qspi_read(QSPI_REG_TBC),
+               (unsigned int)qspi_read(QSPI_REG_TWC),
+               (unsigned int)qspi_read(QSPI_REG_TMC));
+}
+
+rt_err_t rt_hw_qspi0_init(void)
+{    rt_err_t ret;
 
     if (aic_qspi0.registered)
         return RT_EOK;

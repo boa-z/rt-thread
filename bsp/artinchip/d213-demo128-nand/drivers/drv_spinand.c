@@ -999,9 +999,13 @@ static void aic_nand_status(void)
     rt_uint8_t sr = 0, cfg = 0;
     int ecc;
 
+    rt_hw_qspi0_dump();
     if (!spinand.ready)
     {
         rt_kprintf("aic_nand_status: SPI NAND is not initialised\n");
+        if (spinand.qspi != RT_NULL &&
+            spinand_read_status_reg(&sr) == RT_EOK)
+            rt_kprintf("aic_nand_status: raw STATUS=0x%02x\n", sr);
         return;
     }
     if (aic_spinand_ro_read_status(&sr) != RT_EOK)
@@ -1344,6 +1348,8 @@ MSH_CMD_EXPORT_ALIAS(aic_nand_read_part, aic_nand_read_part,
 static int rt_hw_spinand_ro_init(void)
 {
     rt_err_t ret;
+    rt_uint8_t pre_id[4] = {0};
+    int busy;
 
     rt_memset(&spinand, 0, sizeof(spinand));
     if (rt_mutex_init(&spinand.lock, "spinand", RT_IPC_FLAG_PRIO) != RT_EOK)
@@ -1357,19 +1363,31 @@ static int rt_hw_spinand_ro_init(void)
     if (ret != RT_EOK)
         return -RT_ERROR;
 
+    /* Read the ID before reset.  This separates an RX/pinmux problem from
+     * a reset/status problem in the boot log. */
+    if (spinand_read_id_op(pre_id) == RT_EOK)
+        rt_kprintf("spinand: pre-reset ID %02X %02X %02X %02X\n",
+                   pre_id[0], pre_id[1], pre_id[2], pre_id[3]);
+    else
+        rt_kprintf("spinand: pre-reset ID read failed\n");
+
     /* The vendor sequence starts with a software reset. */
     if (spinand_transfer(&cmd_reset, 0, RT_NULL, RT_NULL, 0) != RT_EOK)
     {
         rt_kprintf("spinand: reset command failed\n");
         return -RT_ERROR;
     }
+    busy = spinand_wait_busy(RT_NULL);
+    if (busy != RT_EOK)
     {
-        int busy = spinand_wait_busy(RT_NULL);
-        if (busy != RT_EOK)
-        {
-            rt_kprintf("spinand: device stayed busy after reset (%d)\n", busy);
-            return -RT_ERROR;
-        }
+        rt_uint8_t sr = 0;
+        if (spinand_read_status_reg(&sr) == RT_EOK)
+            rt_kprintf("spinand: reset busy timeout, STATUS=0x%02x\n", sr);
+        else
+            rt_kprintf("spinand: reset busy timeout and STATUS read failed\n");
+        rt_hw_qspi0_dump();
+        /* Continue: the ID/geometry/config checks below will report
+         * whether the device is actually usable. */
     }
 
     ret = spinand_probe();
