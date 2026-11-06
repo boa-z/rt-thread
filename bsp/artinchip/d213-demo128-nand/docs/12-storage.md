@@ -2,7 +2,14 @@
 
 ## 12.1 当前状态
 
-**只读路径已实现：BUILD + STATIC + HOST PASS，硬件验证 PENDING（HW PENDING）。**
+**只读路径已实现：BUILD + STATIC + HOST PASS；QSPI0/NAND 核心读取已通过实机验证（HW PASS，部分验收项 PENDING）。**
+
+实机已确认：`qspi0` 初始化、JEDEC ID `EF AA 21`（W25N01GV）、
+`2048+64 B / 64 pages/block / 1024 blocks`、`STATUS=0x00`、`CFG=0x19`、
+物理块 0 为好块、`os` 页 0 连续 100 次读取一致、8 个线性 MTD 分区注册、
+写/擦/移动/标坏全部返回 `-RT_EPERM`。
+`aic_nand_partitions` 的坏块统计/FIT 输出、冷/热重启和完整外设回归仍为
+PENDING。
 
 本轮完成：
 
@@ -422,23 +429,43 @@ python bsp/artinchip/tools/build-check.py \
 python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
 ```
 
-### 12.10.2 硬件验收步骤（HW PENDING）
+### 12.10.2 硬件验收步骤
 
-在没有实机串口日志之前，以下结果必须保持 PENDING：
+#### 2026-11-06 实机结果（第一轮，部分 PASS）
 
-1. 烧录 `d213-nand-readonly` 固件，确认 UART0 正常启动、FinSH 可交互；
-2. 记录 `qspi0` 初始化日志（基址、输入时钟、实际频率）；
-3. `aic_nand_info`：JEDEC ID 与板上丝印/料号一致，几何与 12.2 一致；
-4. `aic_nand_status`：BUSY=0、ECC 位为 0 或已纠错；
-5. `aic_nand_read_page 0` 与 `aic_nand_read_page 1`：ECC 结果明确；
-6. 对同一物理页连续读取 ≥ 100 次，数据一致（utest 已实现 100 次）；
-7. `aic_nand_check_block` 抽查 `spl`/`os` 块，记录坏块；
-8. `aic_nand_partitions`：坏块计数、`os` FIT 检测结果；
-9. `aic_nand_read_part os 0 8`：magic 与 `aic_nand_partitions` 一致；
-10. `utest_run -thread bsp.d213.spinand.ro` 全部通过；
-11. 冷启动、热重启各 ≥ 5 次，NAND 读取不改变启动结果；
-12. 确认 UART、tick、CAN、显示仍正常；
-13. 全程不得出现 Program/Erase/Refresh 命令（可用逻辑分析仪抽查）。
+烧录 `artifacts/d213-nand-readonly` 固件（W25N01GV 板卡），启动与读取链路
+已经实机确认：
+
+- `qspi0: registered, base=0x10400000 sclk=100000000 Hz
+  requested=24000000 Hz actual=16666666 Hz cmu=0x00003105`；
+- `spinand: pre-reset ID EF AA 21 00`，复位后 `JEDEC ID EF AA 21 00`，
+  识别为 W25N01GV，`2048+64 B, 64 pages/block, 1024 blocks`；
+- `spinand: CFG=0x19 STATUS=0x00`（Quad/BUFFER/ECC 均开启，非 busy）；
+- `spinand: 8 linear MTD partition(s) registered, read-only`；
+- `aic_nand_status`：`busy: no`、`ecc bits 0`，QSPI 寄存器
+  `TCFG=0x41c0`（MSB + 半周期采样）、`CCFG=0x00001002`；
+- `utest_run -thread bsp.d213.spinand.ro` 整个用例 **HW PASS**，
+  覆盖 JEDEC 识别、物理块 0 好块、`os` 页 0 连续 100 次读取一致、
+  越界拒绝、写/擦/移动/标坏拒绝。
+
+排障记录（本轮修复的两个实机缺陷）：
+
+1. **LSB 位序反转**：上游 `rt_qspi_configure()` 不把 mode/max_hz 传到
+   `parent.config`，驱动按全 0 配置启动成 LSB（`TCFG bit12=1`），
+   JEDEC ID 读回 `FF FF FF FF`；改为调用
+   `rt_spi_configure(&qspi->parent, &cfg.parent)` 后恢复正常。
+2. **RX 采样沿**：按频率切 `RXDLY_DIS` 会让 STATUS 读回 `0xFF`、
+   BUSY 保持 1；固定为原厂默认半周期采样（`AIC_DEV_QSPI0_DELAY_MODE=2`）。
+
+#### 剩余验收项（仍 PENDING）
+
+1. `aic_nand_read_page` 手工读样页并核对 ECC/OOB 输出；
+2. `aic_nand_check_block` 抽查 `spl`/`os` 等多个块，记录坏块分布；
+3. `aic_nand_partitions`：坏块计数、`os` FIT 检测结果；
+4. `aic_nand_read_part os 0 8`：magic 与 `aic_nand_partitions` 一致；
+5. 冷启动、热重启各 ≥ 5 次，NAND 读取不改变启动结果；
+6. 确认 UART、tick、CAN、显示在含 NAND 的配置下仍正常；
+7. 用逻辑分析仪抽查全程无 Program/Erase/Refresh 命令。
 
 ### 12.10.3 结果分级
 
@@ -446,7 +473,8 @@ python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
 
 `BUILD / STATIC / HOST / HW / PENDING / FAIL`
 
-当前结论：**BUILD + STATIC + HOST PASS；HW PENDING**。
+当前结论：**BUILD + STATIC + HOST PASS；核心读取链路 HW PASS
+（2026-11-06，W25N01GV）；剩余验收项 PENDING**（见 12.10.2）。
 
 ## 12.11 风险与限制
 

@@ -30,7 +30,7 @@ D213EC-DEMO-V4-0 board, using the `demo128-nand` software configuration.
 | GE Normal scale/blend/rotate | BUILD + STATIC, re-test pending |
 | LVGL 9.6.0 display + GT911 pointer input | HW: software render, click, drag and touch coordinates verified |
 | D213 utest firmware | BUILD + STATIC, P0/P1 hardware regression pending |
-| SPI NAND (QSPI0) + standard MTD, read-only | BUILD + STATIC + HOST PASS; HW PENDING. Chip ID/geometry, page/OOB/ECC reads, bad-block check, linear partitions and `os` FIT probe implemented; write/erase/mark rejected |
+| SPI NAND (QSPI0) + standard MTD, read-only | BUILD + STATIC + HOST PASS; HW PASS for JEDEC ID, geometry, status/ECC read, bad-block check, 100x page reread, MTD registration and write rejection. `aic_nand_partitions`/`os` FIT, cold/hot reboot and full peripheral regression still pending |
 | SPI NAND write, NFTL, filesystem, OTA | Not implemented |
 | MIPI/RGB, USB, SDIO, Ethernet, audio, video | Not implemented |
 
@@ -176,7 +176,10 @@ Notes:
 
 See `docs/12-storage.md` for the full design, error semantics, provenance and
 the hardware acceptance checklist.  Current status is BUILD + STATIC + HOST
-PASS; hardware validation is PENDING.
+PASS, plus HW PASS for JEDEC ID `EF AA 21`, geometry, status/ECC read,
+bad-block check, 100x page reread, MTD registration and write rejection.
+Partition/FIT output, cold/hot reboot and full peripheral regression remain
+PENDING.
 
 ## Regression tests
 
@@ -337,7 +340,10 @@ packaging time.
   The D21x SELFTEST loopback also needs CAN0 TX/RX wired together; without
   that wiring the loopback utest remains disabled.
 - SPI NAND read-only support exists (QSPI0 + standard MTD + partition/FIT
-  diagnostics), but it is not hardware validated yet.  There is no NAND
+  diagnostics).  The QSPI0 link, W25N01GV identity, geometry, status/ECC read,
+  bad-block check, 100x page reread, MTD registration and write rejection are
+  hardware verified.  Partition/FIT output, cold/hot reboot and full
+  peripheral regression remain to be tested.  There is no NAND
   write/erase, bad-block marking, NFTL, filesystem, OTA or refresh support.
   `data`/`data_r` remain NFTL-only and are not linear MTD devices.
 - No MIPI/RGB, USB, SDIO, Ethernet, Wi-Fi, audio or video support yet.
