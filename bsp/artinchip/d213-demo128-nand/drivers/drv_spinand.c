@@ -427,7 +427,14 @@ static int spinand_attach_qspi(void)
     cfg.ddr_mode = 0;
     cfg.qspi_dl_width = 1;   /* stage 1: single-line data phase */
 
-    ret = rt_qspi_configure(dev, &cfg);
+    /*
+     * Do not use rt_qspi_configure() here: it updates the qspi config but
+     * rt_spi_bus_configure() then passes the still-zero parent.config to
+     * the driver, so mode/max_hz would be lost (LSB mode, wrong clock).
+     * Configure the parent explicitly, as the Nuvoton SPINAND port does.
+     */
+    dev->config = cfg;
+    ret = rt_spi_configure(&dev->parent, &dev->config.parent);
     if (ret != RT_EOK)
     {
         rt_kprintf("spinand: qspi configure failed (%d)\n", ret);

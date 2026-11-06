@@ -118,6 +118,14 @@ SPI NAND 驱动在 attach 之前再次调用 `rt_hw_qspi0_init()`，保证总线
 - 命令-only 消息返回 1，避免上游 `rt_qspi_transfer_message()` 把 0 当作
   I/O 错误。
 
+> **上游 API 注意**：本 BSP 使用
+> `rt_spi_configure(&qspi->parent, &cfg.parent)` 而不是
+> `rt_qspi_configure()`。当前 RT-Thread 的 `rt_qspi_configure()` 只更新
+> `rt_qspi_device.config`，随后传给总线 `configure` 的
+> `device->parent.config` 仍是全 0，实测会让 QSPI 以 LSB、0 Hz 配置启动，
+> NAND 命令位序全部反转（JEDEC ID 读回 `FF FF FF FF`）。
+> 这与 Nuvoton SPINAND 端口的处理方式一致。
+
 由于写操作在本轮被禁止，QSPI 只发送 NAND 读命令和
 GET_FEATURE/SET_FEATURE（配置寄存器）。详细日志见 12.9。
 
