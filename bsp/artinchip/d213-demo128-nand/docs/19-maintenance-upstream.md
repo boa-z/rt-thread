@@ -147,7 +147,7 @@ Image size:
 2. 显示/GE 压力测试与 Cache 一致性验证；
 3. 重组后实机回归（UART0、Tick、FPU、GPIO）；
 4. I2C/CAN/PWM/WDT/RTC 实机验证；
-5. QSPI + SPI NAND + MTD + LittleFS；
+5. QSPI + SPI NAND + MTD 只读实机验证（代码已接入），再做 LittleFS/写入；
 6. LVGL 9.6.0 显示/触摸实机验收；
 7. Ethernet + LwIP；
 8. USB Host；

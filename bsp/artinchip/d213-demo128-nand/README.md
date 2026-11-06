@@ -30,7 +30,9 @@ D213EC-DEMO-V4-0 board, using the `demo128-nand` software configuration.
 | GE Normal scale/blend/rotate | BUILD + STATIC, re-test pending |
 | LVGL 9.6.0 display + GT911 pointer input | HW: software render, click, drag and touch coordinates verified |
 | D213 utest firmware | BUILD + STATIC, P0/P1 hardware regression pending |
-| SPI NAND/MTD/FS, MIPI/RGB, USB, SDIO, Ethernet, audio, video | Not implemented |
+| SPI NAND (QSPI0) + standard MTD, read-only | BUILD + STATIC + HOST PASS; HW PENDING. Chip ID/geometry, page/OOB/ECC reads, bad-block check, linear partitions and `os` FIT probe implemented; write/erase/mark rejected |
+| SPI NAND write, NFTL, filesystem, OTA | Not implemented |
+| MIPI/RGB, USB, SDIO, Ethernet, audio, video | Not implemented |
 
 **CAN FD is not implemented and is not supported by the D21x controller.**
 Do not enable the vendor `canfd` driver for D21x.
@@ -44,10 +46,21 @@ Build verification with Xuantie GCC 14.3.0 (V3.3.0), Python 3.13 and SCons 4.8.1
 | `configs/d213-utest.config` (default + utest) | 155968 | 6344 | 18360 |
 | default + lvgl-aic-standalone software path | not rebuilt in this migration | - | - |
 
-Xuantie GCC 10.2.0 (V2.6.1) also builds the same source; object sizes differ
-because the two toolchains use different code generation. Display/GE hardware
-verification was done with an earlier GCC 10.2.0 display-only build; the new
-default image includes the additional peripherals and needs a re-test.
+With Xuantie V2.6.1 / GCC 10.2.0 (the Luban-Lite toolchain used for the
+storage port), the same profiles build to:
+
+| Configuration | text | data | bss |
+|---|---:|---:|---:|
+| `configs/d213-minimal.config` | 62896 | 2616 | 14288 |
+| `configs/d213-default.config` | 111384 | 5936 | 15408 |
+| `configs/d213-utest.config` (with the NAND read-only case) | 175416 | 6344 | 20096 |
+| `configs/d213-nand-readonly.config` | 82056 | 2616 | 16032 |
+
+The first table was measured with GCC 14.3.0; the second table with the
+Luban-Lite Xuantie GCC 10.2.0 toolchain. Object sizes differ because the two
+toolchains use different code generation. Display/GE hardware verification
+was done with an earlier GCC 10.2.0 display-only build; the new default image
+includes the additional peripherals and needs a re-test.
 
 Packaging with the current SDK assets:
 
@@ -118,6 +131,53 @@ copy is the default; GE frame copy remains optional.
 
 `rtconfig.h` is generated from `.config`; do not edit it by hand.
 
+## SPI NAND (read-only)
+
+`configs/d213-nand-readonly.config` enables QSPI0, the SPI NAND driver and
+the standard RT-Thread MTD NAND device:
+
+```sh
+cp configs/d213-nand-readonly.config .config
+scons --pyconfig-silent
+scons -j8
+```
+
+The partition table is generated from `pack/image_cfg.json` at build time
+(`tools/gen_nand_parts.py`); do not add a second copy of the offsets.  Only
+linear partitions are registered as MTD devices.  `data` and `data_r` are
+NFTL-backed and are intentionally not exposed as raw linear devices.
+
+MSH commands (all read-only):
+
+```text
+aic_nand_info
+aic_nand_status
+aic_nand_read_page <physical_page>
+aic_nand_check_block <physical_block>
+aic_nand_partitions
+aic_nand_read_part <name> <offset> <length>
+```
+
+Notes:
+
+- `read_page` / `check_block` use whole-chip physical numbers;
+- `read_part` uses a partition-relative byte offset and a length of at most
+  4096 bytes;
+- `read_page` reports `clean`, `corrected`, `UNCORRECTABLE`, `timeout` or
+  `transport error`;
+- program, erase, move and mark-bad are rejected with `-RT_EPERM`; there is no
+  MSH write/erase command;
+- generic `rt_device_read()` / `rt_device_write()` on an MTD partition return
+  `-RT_ENOSYS` / `-RT_EPERM`; use `rt_mtd_nand_read()` for page data;
+- partition reads are linear and do not skip bad blocks.  The Bootloader
+  bad-block mapping is not confirmed, so `aic_nand_partitions` reports the
+  bad-block count per linear partition and `os` is only claimed readable
+  when its FIT magic and totalsize are valid.
+
+See `docs/12-storage.md` for the full design, error semantics, provenance and
+the hardware acceptance checklist.  Current status is BUILD + STATIC + HOST
+PASS; hardware validation is PENDING.
+
 ## Regression tests
 
 The default and minimal images never link the test cases.  A separate
@@ -147,6 +207,12 @@ msh > utest_run -thread core.mutex
 msh > utest_run -thread core.mutex_pi
 msh > utest_run -thread bsp.d213.*
 ```
+
+`bsp.d213.spinand.ro` reads the `os` partition header 100 times, checks
+bounds rejection, verifies the bad-block marker path and asserts that
+write/erase/move/mark-bad all return `-RT_EPERM`.  It never modifies NAND.
+If no NAND/MTD device is registered the case prints a skip message and
+returns without failing the rest of the suite.
 
 Or use the host-side serial runner (requires `pip install pyserial`):
 
@@ -270,8 +336,11 @@ packaging time.
 - CAN requires an external transceiver, bus termination and a peer node.
   The D21x SELFTEST loopback also needs CAN0 TX/RX wired together; without
   that wiring the loopback utest remains disabled.
-- No SPI NAND/MTD/filesystem, MIPI/RGB, USB, SDIO, Ethernet, Wi-Fi, audio or
-  video support yet.
+- SPI NAND read-only support exists (QSPI0 + standard MTD + partition/FIT
+  diagnostics), but it is not hardware validated yet.  There is no NAND
+  write/erase, bad-block marking, NFTL, filesystem, OTA or refresh support.
+  `data`/`data_r` remain NFTL-only and are not linear MTD devices.
+- No MIPI/RGB, USB, SDIO, Ethernet, Wi-Fi, audio or video support yet.
 - No general DMA framework or cache-coherent allocator.
 - `libcpu/risc-v/common` is unmodified on this branch.  The pure BSP
   therefore reports the known `fs1` FPU context failure; the common-port

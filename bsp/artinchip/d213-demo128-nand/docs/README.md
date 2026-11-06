@@ -21,7 +21,7 @@
 | [09-can.md](09-can.md) | CAN 2.0A/B 专项：帧格式、过滤、错误状态、测试 |
 | [10-pwm-wdt-rtc.md](10-pwm-wdt-rtc.md) | PWM、看门狗、RTC 的使用与限制 |
 | [11-gpio.md](11-gpio.md) | GPIO/Pin 设备 API、中断、去抖与板级引脚 |
-| [12-storage.md](12-storage.md) | QSPI/SPI NAND/MTD/文件系统：现状、约束与后续方案 |
+| [12-storage.md](12-storage.md) | QSPI0/SPI NAND 只读驱动、标准 MTD 接入、分区/FIT 诊断与验证 |
 | [13-display-lvgl.md](13-display-lvgl.md) | LVDS/DE Framebuffer、GE Normal、LVGL 9.6.0 显示/触摸端口与限制 |
 | [14-connectivity-multimedia.md](14-connectivity-multimedia.md) | USB、SDIO、以太网、Wi-Fi、音频、视频现状 |
 | [15-build-pack-deploy.md](15-build-pack-deploy.md) | 工具链、配置、编译、FIT/ITB/IMG 打包、烧录 |

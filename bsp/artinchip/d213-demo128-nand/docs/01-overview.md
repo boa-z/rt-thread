@@ -62,11 +62,13 @@ GE 缩放、Alpha 混合、旋转的测试用例已修正，尚待下一次实�
 - GE Normal 模式缩放、Alpha 混合、旋转（FillRect/BitBlt 已实机验证）；
 - GT911 电容触摸（多点 DOWN/MOVE/UP 已实机验证，方向待校准）；
 - LVGL 9.6.0 显示与 GT911 输入（软件渲染 + 可选 GE 帧拷贝，使用外部固定版本源码）；
+- SPI NAND 只读：QSPI0 + 标准 MTD NAND + 只读分区/FIT 诊断
+  （BUILD + STATIC + HOST PASS，HW PENDING）；
 - 外设/显示/GE/触摸 MSH 测试命令。
 
 ### 尚未实现
 
-- SPI NAND/MTD、DFS/FatFs/LittleFS、OTA；
+- SPI NAND 写入/擦除/坏块标记、NFTL、DFS/FatFs/LittleFS、OTA；
 - MIPI DSI / RGB 显示；
 - USB Host/Device、SDMC/SDIO、Ethernet、Wi-Fi/蓝牙；
 - 音频、视频、DVP、PSADC、EPWM、CAP/QEP、CIR、加密引擎等。

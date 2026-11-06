@@ -181,7 +181,7 @@ PIN_CFG = FUNC[3:0] | DRIVE[6:4] | PULL[9:8] |
 | PWM0-3 | 是 | PC.0..PC.7 | `hal_pwm.c` | pwm | 4 通道 | BUILD/STATIC | 无 EPWM/CAP/QEP |
 | WDT | 是 | 是 | `hal_wdt.c` | watchdog | 完整 | BUILD/STATIC | 未接中断回调 |
 | RTC | 是 | 是 | `hal_rtc.c` | rtc | 秒计数 | BUILD/STATIC | 闹钟未实现 |
-| SPI NAND | 是 | 128 MB | 原厂 QSPI/SPINAND | MTD | 未实现 | N/I | 需 QSPI+DMA+ECC+BBM |
+| SPI NAND | 是 | 128 MB | 本 BSP `drv_qspi.c` + `drv_spinand.c`（参考原厂 QSPI/SPINAND） | MTD NAND + QSPI | 只读 Page/OOB/ECC/坏块检查 | BUILD + STATIC + HOST；HW PENDING | 不支持写/擦/坏块标记；`data/data_r` 为 NFTL，未注册为线性 MTD |
 | SD/MMC | 是 | SD 卡 | 原厂 SDMC | SDIO/MMCSD | 未实现 | N/I | 需 SDMC + DMA |
 | Display/LVDS | 是 | 7" LVDS + CTP | `aic_hal_de.c` + LVDS | graphic (`lcd`) | DE + LVDS + FB + VSync | HW | Color Bar、双缓冲、VSync 已实机验证 |
 | Display/MIPI/RGB | 是 | 10.1" MIPI 套装 | 原厂 DE/DSI/RGB | framebuffer | 未实现 | N/I | 需面板时序/lane 配置 |

@@ -108,6 +108,11 @@ bsp/artinchip/d213-demo128-nand/
 | `bsp.d213.pwm` | PWM0 设置、使能、关闭 | 不影响 PC.7 面板使能 |
 | `bsp.d213.can0.config` | CAN0 打开、500 kbit/s、normal 模式、状态读取 | 无 |
 | `bsp.d213.can0.loopback` | CAN0 SELFTEST 发送并接收一帧 | 需要外部 TX/RX 回环，或收发器+第二节点；默认不编译 |
+| `bsp.d213.spinand.ro` | JEDEC ID/几何、`os` 页 0 重复读 100 次、越界拒绝、坏块标记、写/擦/移动/标坏必须返回 `-RT_EPERM` | D213 板载 SPI NAND；无 NAND 时打印跳过信息，不误报通过 |
+
+`bsp.d213.spinand.ro` 需要 `BSP_USING_SPINAND_MTD_NAND`；当前
+`configs/d213-utest.config` 已开启。该用例全程只读，不会产生
+Program/Erase/Refresh 命令。
 
 CAN 外部总线收发仍需要：
 

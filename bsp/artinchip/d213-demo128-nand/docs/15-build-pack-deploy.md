@@ -41,6 +41,27 @@ rtconfig.h                      由 .config 生成
 
 LVGL 默认关闭。UART2/4、I2C0/1/2、PWM3（PC.6/PC.7，与面板使能冲突）等未使用实例保留 Kconfig 选项和驱动源码，可按需启用。
 
+可复现配置位于 `configs/`：
+
+| 文件 | 用途 |
+|---|---|
+| `d213-minimal.config` | 最小启动（UART0 + GPIO） |
+| `d213-default.config` | 默认外设 + 显示 + GE + GT911 |
+| `d213-utest.config` | 默认配置 + utest + SPI NAND 只读用例 |
+| `d213-nand-readonly.config` | minimal + QSPI0/SPI NAND/MTD 只读 |
+
+使用某个配置：
+
+```sh
+cp configs/d213-nand-readonly.config .config
+scons --pyconfig-silent
+scons -j8
+```
+
+`drivers/SConscript` 在启用 SPI NAND 时调用
+`tools/gen_nand_parts.py`，从 `pack/image_cfg.json` 生成
+`build/spinand_parts_gen.h`。不要手工维护第二份分区常量。
+
 ## 15.3 修改配置
 
 使用标准 RT-Thread menuconfig：

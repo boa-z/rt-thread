@@ -146,7 +146,28 @@ hal/psadc, drv/psadc
 
 `tools/mk_firmware.py` 调用本地 Luban-Lite 的 Python 工具。这些工具**不复制到本仓库**，由使用者在打包时提供。它们的许可证以 Luban-Lite 仓库为准。
 
-## 20.8 合规检查清单
+## 20.8 SPI NAND / QSPI 参考实现
+
+`drivers/drv_qspi.c` 与 `drivers/drv_spinand.c` 是**行为移植**，不是逐字节
+复制。参考的 Luban-Lite 文件（均为 Apache-2.0）：
+
+| 原厂路径 | 本 BSP 使用范围 |
+|---|---|
+| `bsp/artinchip/hal/qspi/qspi_hw_v1.0.h` | 寄存器偏移、位定义、FIFO 深度、水位 |
+| `bsp/artinchip/hal/qspi/hal_qspi_v1x.c` | 初始化序列、同步 FIFO、TDONE/超时 |
+| `bsp/artinchip/hal/qspi/qspi_internal.c` | CDR1/CDR2 分频、超时估算 |
+| `bsp/artinchip/drv/qspi/drv_qspi.c` | 命令/地址/Dummy/数据阶段拆分、软件 CS |
+| `bsp/peripheral/spinand/spinand.c` | RESET/READ ID/PAGE READ/READ CACHE、ECC 状态、坏块读取 |
+| `bsp/peripheral/spinand/winbond.c` | W25N01GV 等型号几何与 ECC 解码 |
+| `bsp/peripheral/spinand/inc/spinand.h` | 命令字、寄存器、状态位 |
+| `bsp/artinchip/drv/spinand/spinand_port.c` | `spi_nand_cmd_cfg` 到 `rt_qspi_message` 的映射 |
+| `target/d21x/demo128-nand/pinmux.c` | PB.0~PB.5 功能 3 |
+
+未使用、未链接：NFTL 静态库、`spinand_refresh`、UFFS、原厂 13 槽 MTD
+扩展、DMA 驱动。若后续复制原厂文件，必须按 20.2 的方式补充 SHA-256、
+依赖和修改记录。
+
+## 20.9 合规检查清单
 
 - [x] 原厂文件保留版权头；
 - [x] 原厂文件未修改；
@@ -154,5 +175,6 @@ hal/psadc, drv/psadc
 - [x] 文档记录来源和 SHA-256；
 - [x] 未提交 Bootloader/PBP/固件二进制；
 - [x] 未提交本地 SDK 路径到构建脚本（仅文档示例）；
+- [x] QSPI/SPI NAND 行为移植来源与许可证已记录；
 - [ ] 上游贡献前由 ArtInChip/RT-Thread 复核；
 - [ ] 新增 HAL 时更新本文件。
