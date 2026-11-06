@@ -11,13 +11,20 @@
 
 #define SELFTEST_THREAD_STACK 2048
 #define SELFTEST_LOOPS        1000
+#define FPU_IRQ_TICKS         30
+#define FPU_IRQ_TIMESLICE     5
 
-extern rt_uint64_t aic_fpu_context_test(rt_uint64_t seed,
+extern rt_uint64_t aic_fpu_context_test(rt_uint32_t id, rt_uint64_t seed,
                                         void (*sync)(void *), void *arg);
+extern rt_uint64_t aic_fpu_irq_test(rt_uint32_t id, rt_uint64_t seed,
+                                    void (*delay)(rt_tick_t),
+                                    rt_tick_t ticks);
 
 static struct rt_semaphore test_done;
 static struct rt_mutex test_lock;
 static volatile rt_uint32_t test_counter;
+static volatile rt_uint32_t fpu_context_fail;
+static volatile rt_uint32_t fpu_irq_fail;
 static rt_bool_t selftest_running;
 
 /*
@@ -64,7 +71,7 @@ static void selftest_worker(void *parameter)
     }
 
     seed = 0x3ff0000000000000ULL + ((rt_uint64_t)id << 32);
-    fpu_result = (rt_uint32_t)aic_fpu_context_test(seed, fpu_sync,
+    fpu_result = (rt_uint32_t)aic_fpu_context_test(id, seed, fpu_sync,
                                                    (void *)(rt_ubase_t)id);
 
     if (id == 0)
@@ -74,14 +81,69 @@ static void selftest_worker(void *parameter)
 
     if (fpu_result == 0)
     {
-        rt_kprintf("worker%u: fpu context OK\n", id);
+        rt_kprintf("worker%u: fpu context/fcsr OK\n", id);
     }
     else
     {
-        rt_kprintf("worker%u: fpu context FAIL (fs%u)\n", id, fpu_result);
+        fpu_context_fail = 1;
+        rt_kprintf("worker%u: fpu context/fcsr FAIL (code %u)\n",
+                   id, fpu_result);
     }
 
     rt_sem_release(&test_done);
+}
+
+/*
+ * Busy wait so a timer interrupt must preempt the calling thread.  Calling
+ * rt_thread_delay() here would hide the timer path by blocking voluntarily.
+ */
+static void fpu_tick_delay(rt_tick_t ticks)
+{
+    rt_tick_t start = rt_tick_get();
+
+    while ((rt_tick_t)(rt_tick_get() - start) < ticks)
+    {
+        __asm__ volatile("nop" ::: "memory");
+    }
+}
+
+static void fpu_irq_worker(void *parameter)
+{
+    rt_uint32_t id = (rt_uint32_t)(rt_ubase_t)parameter;
+    rt_uint64_t seed;
+    rt_uint32_t fpu_result;
+
+    seed = 0x3ff0000000000000ULL + ((rt_uint64_t)id << 32);
+    fpu_result = (rt_uint32_t)aic_fpu_irq_test(id, seed, fpu_tick_delay,
+                                               FPU_IRQ_TICKS);
+
+    if (fpu_result == 0)
+    {
+        rt_kprintf("fpu irq%u: timer preemption OK\n", id);
+    }
+    else
+    {
+        fpu_irq_fail = 1;
+        rt_kprintf("fpu irq%u: timer preemption FAIL (code %u)\n",
+                   id, fpu_result);
+    }
+
+    rt_sem_release(&test_done);
+}
+
+static void selftest_cleanup(void)
+{
+    /*
+     * The command can be invoked repeatedly from MSH.  The objects are
+     * static, so detach them before the next invocation; otherwise the
+     * RT-Thread object container rejects a second rt_sem_init().
+     */
+    rt_sem_detach(&test_done);
+    rt_mutex_detach(&test_lock);
+    rt_sem_detach(&fpu_sem1);
+    rt_sem_detach(&fpu_sem2);
+    rt_sem_detach(&fpu_sem3);
+    selftest_running = RT_FALSE;
 }
 
 static void aic_selftest(void)
@@ -104,6 +166,8 @@ static void aic_selftest(void)
     rt_sem_init(&fpu_sem2, "fpu2", 0, RT_IPC_FLAG_PRIO);
     rt_sem_init(&fpu_sem3, "fpu3", 0, RT_IPC_FLAG_PRIO);
     test_counter = 0;
+    fpu_context_fail = 0;
+    fpu_irq_fail = 0;
 
     /*
      * fpu_sync() implements a two-thread handshake: id 0 releases fpu_sem1
@@ -117,13 +181,8 @@ static void aic_selftest(void)
                           SELFTEST_THREAD_STACK, 12, 10);
     if (t1 == RT_NULL || t2 == RT_NULL)
     {
-        rt_kprintf("selftest: thread create failed\n");
-        rt_sem_detach(&test_done);
-        rt_mutex_detach(&test_lock);
-        rt_sem_detach(&fpu_sem1);
-        rt_sem_detach(&fpu_sem2);
-        rt_sem_detach(&fpu_sem3);
-        selftest_running = RT_FALSE;
+        rt_kprintf("selftest: context worker create failed\n");
+        selftest_cleanup();
         return;
     }
 
@@ -135,21 +194,38 @@ static void aic_selftest(void)
     rt_sem_take(&test_done, RT_WAITING_FOREVER);
     elapsed = rt_tick_get() - start;
 
-    rt_kprintf("selftest: counter=%u (expected %d), ticks=%u\n",
-               test_counter, SELFTEST_LOOPS * 2, (unsigned int)elapsed);
+    rt_kprintf("selftest: counter=%u (expected %d), ticks=%u, fpu=%s\n",
+               test_counter, SELFTEST_LOOPS * 2, (unsigned int)elapsed,
+               fpu_context_fail ? "FAIL" : "OK");
 
     /*
-     * The command can be invoked repeatedly from MSH.  The objects are
-     * static, so detach them before the next invocation; otherwise the
-     * RT-Thread object container rejects a second rt_sem_init().
-     * Both workers have already released test_done as their last action.
+     * Phase 2: both workers run at the same priority with a short time
+     * slice.  The busy wait spans several slices, so timer interrupts must
+     * preempt the FPU-live thread and switch to its peer.
      */
-    rt_sem_detach(&test_done);
-    rt_mutex_detach(&test_lock);
-    rt_sem_detach(&fpu_sem1);
-    rt_sem_detach(&fpu_sem2);
-    rt_sem_detach(&fpu_sem3);
-    selftest_running = RT_FALSE;
+    t1 = rt_thread_create("fpuirq0", fpu_irq_worker, (void *)0,
+                          SELFTEST_THREAD_STACK, 13, FPU_IRQ_TIMESLICE);
+    t2 = rt_thread_create("fpuirq1", fpu_irq_worker, (void *)1,
+                          SELFTEST_THREAD_STACK, 13, FPU_IRQ_TIMESLICE);
+    if (t1 == RT_NULL || t2 == RT_NULL)
+    {
+        rt_kprintf("selftest: irq worker create failed\n");
+        selftest_cleanup();
+        return;
+    }
+
+    start = rt_tick_get();
+    rt_thread_startup(t1);
+    rt_thread_startup(t2);
+
+    rt_sem_take(&test_done, RT_WAITING_FOREVER);
+    rt_sem_take(&test_done, RT_WAITING_FOREVER);
+    elapsed = rt_tick_get() - start;
+
+    rt_kprintf("selftest: fpu timer preemption %s (ticks=%u)\n",
+               fpu_irq_fail ? "FAIL" : "OK", (unsigned int)elapsed);
+
+    selftest_cleanup();
 }
 MSH_CMD_EXPORT_ALIAS(aic_selftest, aic_selftest, run D213 bring up self test);
 
