@@ -19,8 +19,15 @@
 #endif
 /* Number of XLEN-sized stack slots occupied by 32 floating-point registers. */
 #define CTX_FPU_REG_NR  (32 * __riscv_flen / __riscv_xlen)
+/*
+ * fcsr is not part of the vector context.  Reserve two XLEN slots (fcsr
+ * plus padding) so the FPU trap/switch frame stays 16-byte aligned on
+ * both RV32 and RV64, with or without RVV.
+ */
+#define CTX_FCSR_REG_NR 2
 #else
 #define CTX_FPU_REG_NR  0
+#define CTX_FCSR_REG_NR 0
 #endif
 
 #ifdef __ASSEMBLY__
