@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "board.h"
+#include "aic_clk_id.h"
 
 #define UART_RBR   0x00
 #define UART_THR   0x00
@@ -32,7 +33,6 @@
 #define UART_MCR   0x10
 #define UART_LSR   0x14
 #define UART_USR   0x7C
-#define UART_RFL   0x84
 #define UART_RXCTL 0xA0
 
 #define UART_LSR_DR   0x01
@@ -43,11 +43,11 @@
 #define UART_LSR_THRE 0x20
 #define UART_LSR_TEMT 0x40
 
-#define UART_IER_RDA      0x01
 #define UART_FCR_ENABLE   0x01
 #define UART_FCR_RX_RESET 0x02
 #define UART_FCR_TX_RESET 0x04
-#define UART_FCR_RX_TRIG  (3U << 6)
+/* RX trigger 0 = one byte; do not rely on the character-timeout path. */
+#define UART_FCR_RX_TRIG  (0U << 6)
 #define UART_FCR_TX_TRIG  (3U << 4)
 #define UART_LCR_DLAB     0x80
 #define UART_LCR_STOP     0x04
@@ -56,21 +56,20 @@
 #define UART_LCR_8N1      0x03
 #define UART_RXCTL_ENABLE 0x01
 
-#define UART_IIR_NO_INT     0x01
-#define UART_IIR_RX_DATA    0x04
-#define UART_IIR_RX_TIMEOUT 0x0C
-#define UART_IIR_LINE_STAT  0x06
-
 struct aic_uart
 {
+    uint32_t id;
     uint32_t base;
     uint32_t irq;
     uint32_t clk;
+    rt_bool_t rx_thread_started;
+    const char *name;
     struct rt_serial_device serial;
 };
 
 #define AIC_UART_INSTANCE(n)                                             \
     {                                                                    \
+        .id = (n),                                                       \
         .base = AIC_UART_BASE(n),                                        \
         .irq = AIC_UART_IRQ(n),                                          \
         .clk = AIC_UART_CLK_FREQ,                                        \
@@ -111,6 +110,38 @@ static inline void uart_write(struct aic_uart *uart, uint32_t reg, uint32_t valu
     *(volatile uint32_t *)(uintptr_t)(uart->base + reg) = value;
 }
 
+/*
+ * IER shares its address with DLH, selected by LCR.DLAB.  A bootloader may
+ * leave DLAB set; writing IER then silently updates the baud divisor and
+ * leaves the real interrupt mask uncontrolled.
+ */
+static void aic_uart_write_ier(struct aic_uart *uart, uint32_t value)
+{
+    uint32_t lcr = uart_read(uart, UART_LCR);
+
+    uart_write(uart, UART_LCR, lcr & ~UART_LCR_DLAB);
+    /* Make sure the DLAB update is visible before touching the shared IER. */
+    (void)uart_read(uart, UART_LCR);
+    uart_write(uart, UART_IER, value);
+}
+
+static void aic_uart_reset(uint32_t id)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)
+        (AIC_CMU_BASE + CLK_UART0_REG + id * 4);
+    uint32_t value = *reg;
+
+    /* CMU bit 13 is active-low reset release. */
+    *reg = value & ~(1U << 13);
+    for (volatile int i = 0; i < 1000; i++)
+    {
+    }
+    *reg = value | (1U << 13);
+    for (volatile int i = 0; i < 1000; i++)
+    {
+    }
+}
+
 static uint32_t aic_uart_lcr(const struct serial_configure *cfg)
 {
     uint32_t lcr;
@@ -147,7 +178,6 @@ static rt_err_t aic_uart_configure(struct rt_serial_device *serial,
 {
     struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
     uint32_t divisor;
-    uint32_t ier;
     uint32_t lcr;
 
     if (cfg->baud_rate == 0 || uart->clk == 0)
@@ -163,9 +193,8 @@ static rt_err_t aic_uart_configure(struct rt_serial_device *serial,
 
     lcr = aic_uart_lcr(cfg);
 
-    /* Disable interrupts while changing the divisor, then restore them. */
-    ier = uart_read(uart, UART_IER);
-    uart_write(uart, UART_IER, 0);
+    /* RX is polled; never leave a controller interrupt enabled. */
+    aic_uart_write_ier(uart, 0);
 
     uart_write(uart, UART_LCR, lcr | UART_LCR_DLAB);
     uart_write(uart, UART_DLL, divisor & 0xff);
@@ -175,38 +204,36 @@ static rt_err_t aic_uart_configure(struct rt_serial_device *serial,
     /* RS-232 mode, no modem flow control. */
     uart_write(uart, UART_MCR, 0);
 
-    /* Enable and reset FIFOs, 1/2 RX trigger. */
+    /* Enable and reset FIFOs, one-byte RX trigger. */
     uart_write(uart, UART_FCR, UART_FCR_ENABLE | UART_FCR_RX_RESET |
                                UART_FCR_TX_RESET | UART_FCR_RX_TRIG |
                                UART_FCR_TX_TRIG);
 
-    /* Enable the receiver and restore the interrupt mask. */
+    /* Enable the receiver. */
     uart_write(uart, UART_RXCTL, UART_RXCTL_ENABLE);
-    uart_write(uart, UART_IER, ier);
 
     return RT_EOK;
 }
+
+static void aic_uart_start_rx_poll(struct aic_uart *uart);
 
 static rt_err_t aic_uart_control(struct rt_serial_device *serial,
                                  int cmd, void *arg)
 {
     struct aic_uart *uart = (struct aic_uart *)serial->parent.user_data;
-    uint32_t ier;
 
     switch (cmd)
     {
     case RT_DEVICE_CTRL_CLR_INT:
-        ier = uart_read(uart, UART_IER);
-        ier &= ~UART_IER_RDA;
-        uart_write(uart, UART_IER, ier);
+        aic_uart_write_ier(uart, 0);
         rt_hw_interrupt_mask(uart->irq);
         break;
 
     case RT_DEVICE_CTRL_SET_INT:
-        ier = uart_read(uart, UART_IER);
-        ier |= UART_IER_RDA;
-        uart_write(uart, UART_IER, ier);
-        rt_hw_interrupt_umask(uart->irq);
+        /* RX is polled; do not enable the UART/PLIC interrupt line. */
+        aic_uart_write_ier(uart, 0);
+        rt_hw_interrupt_mask(uart->irq);
+        aic_uart_start_rx_poll(uart);
         break;
 
     case RT_DEVICE_CTRL_CONFIG:
@@ -261,45 +288,57 @@ static const struct rt_uart_ops aic_uart_ops = {
     .dma_transmit = RT_NULL,
 };
 
-static void aic_uart_isr(int vector, void *param)
+/*
+ * D21x UART0 keeps IRQ 76 pending even when the controller reports no
+ * source.  The vendor console therefore uses RX polling.  Poll LSR.DR
+ * and feed the serial framework from a thread; this avoids the PLIC path
+ * entirely while still using the standard serial RX FIFO and rx_indicate.
+ */
+static void aic_uart_rx_poll(void *parameter)
 {
-    struct aic_uart *uart = (struct aic_uart *)param;
-    uint32_t iir;
-
-    (void)vector;
+    struct aic_uart *uart = (struct aic_uart *)parameter;
 
     for (;;)
     {
-        iir = uart_read(uart, UART_IIR);
-        if (iir & UART_IIR_NO_INT)
+        if (uart->serial.serial_rx != RT_NULL &&
+            (uart_read(uart, UART_LSR) & UART_LSR_DR))
         {
-            break;
-        }
-
-        switch (iir & 0x0f)
-        {
-        case UART_IIR_RX_DATA:
-        case UART_IIR_RX_TIMEOUT:
             rt_hw_serial_isr(&uart->serial, RT_SERIAL_EVENT_RX_IND);
-            break;
-
-        case UART_IIR_LINE_STAT:
-            /* Reading LSR clears the line-status interrupt. */
-            (void)uart_read(uart, UART_LSR);
-            break;
-
-        default:
-            /* No TX interrupt is enabled by this driver. */
-            break;
         }
+
+        rt_thread_mdelay(1);
+    }
+}
+
+static void aic_uart_start_rx_poll(struct aic_uart *uart)
+{
+    rt_thread_t tid;
+
+    if (uart->rx_thread_started)
+    {
+        return;
+    }
+
+    tid = rt_thread_create(uart->name, aic_uart_rx_poll, uart, 1024, 25, 10);
+    if (tid != RT_NULL)
+    {
+        uart->rx_thread_started = RT_TRUE;
+        rt_thread_startup(tid);
     }
 }
 
 static void aic_uart_register(struct aic_uart *uart, const char *name)
 {
     struct serial_configure config = RT_SERIAL_CONFIG_DEFAULT;
-    uint32_t ier;
 
+    /*
+     * Reset the controller before reusing it.  The bootloader may leave a
+     * latched interrupt (THRE in particular) that IER writes cannot clear,
+     * which makes the PLIC deliver IRQ 76 forever.
+     */
+    aic_uart_reset(uart->id);
+
+    uart->name = name;
     uart->serial.ops = &aic_uart_ops;
     uart->serial.config = config;
 
@@ -310,13 +349,13 @@ static void aic_uart_register(struct aic_uart *uart, const char *name)
                           RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_INT_RX,
                           uart);
 
-    rt_hw_interrupt_install(uart->irq, aic_uart_isr, uart, name);
-    rt_hw_interrupt_umask(uart->irq);
-
-    /* The PLIC is unmasked above; enable the controller RX interrupt. */
-    ier = uart_read(uart, UART_IER);
-    ier |= UART_IER_RDA;
-    uart_write(uart, UART_IER, ier);
+    /*
+     * Keep the controller and PLIC interrupt lines disabled and feed the
+     * serial framework from the polling thread instead.  The poller is
+     * started from RT_DEVICE_CTRL_SET_INT, after the scheduler is running.
+     */
+    aic_uart_write_ier(uart, 0);
+    rt_hw_interrupt_mask(uart->irq);
 }
 
 void rt_hw_serial_init(void)
