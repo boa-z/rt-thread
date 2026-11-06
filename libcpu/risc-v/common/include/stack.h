@@ -79,6 +79,14 @@
 #define RT_HW_SWITCH_CONTEXT_SIZE       16  /* Padding for alignment */
 #endif
 
+/*
+ * Last padding word of an ordinary switch frame.  Interrupt context switches
+ * use a short frame below the trap frame and set this word so the restore
+ * path can resume from the trap frame instead of reading a full FPU frame.
+ * Ordinary frames must keep it zero.
+ */
+#define RT_HW_SWITCH_CONTEXT_FLAG_IDX   (RT_HW_SWITCH_CONTEXT_SIZE - 1)
+
 #ifndef __ASSEMBLY__
 typedef struct rt_hw_switch_frame
 {

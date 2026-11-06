@@ -23,6 +23,7 @@
 #define CTX_SWITCH_FPU_OFF          (RT_HW_SWITCH_CONTEXT_SIZE * SZREG)
 #define CTX_SWITCH_FCSR_OFF         (CTX_SWITCH_FPU_OFF + CTX_FPU_REG_NR * SZREG)
 #define CTX_SWITCH_SIZE             ((CTX_SWITCH_FCSR_OFF + SZREG + 15) & ~15)
+#define CTX_SWITCH_FLAG_OFF         (RT_HW_SWITCH_CONTEXT_FLAG_IDX * SZREG)
 #else
 #define CTX_SWITCH_SIZE             (RT_HW_SWITCH_CONTEXT_SIZE * SZREG)
 #endif
@@ -37,6 +38,10 @@
 
 .macro SAVE_CONTEXT
     addi        sp, sp, -CTX_SWITCH_SIZE
+#ifdef ARCH_RISCV_FPU
+    /* This is an ordinary full switch frame, not a trap-frame resume. */
+    REG_S       zero, CTX_SWITCH_FLAG_OFF(sp)
+#endif
     SAVE_REG    tp, REG_IDX(TP)
     SAVE_REG    ra, REG_IDX(RA)
     SAVE_REG    s0, REG_IDX(S0)
@@ -122,6 +127,13 @@
     LOAD_REG    ra, REG_IDX(RA)
 
 #ifdef ARCH_RISCV_FPU
+    /*
+     * An interrupt switch frame is only RT_HW_SWITCH_CONTEXT_SIZE words
+     * long; its FPU state still lives in the trap frame above it.
+     */
+    REG_L       t0, CTX_SWITCH_FLAG_OFF(sp)
+    bnez        t0, .Lirq_frame\@
+
     CTX_FREG_L  f0,  (CTX_SWITCH_FPU_OFF + FPU_CTX_REG_OFF(0))(sp)
     CTX_FREG_L  f1,  (CTX_SWITCH_FPU_OFF + FPU_CTX_REG_OFF(1))(sp)
     CTX_FREG_L  f2,  (CTX_SWITCH_FPU_OFF + FPU_CTX_REG_OFF(2))(sp)
@@ -159,6 +171,15 @@
 #endif
     RESTORE_TP (REG_IDX(TP) * SZREG)
     addi        sp, sp, CTX_SWITCH_SIZE
+    j           .Lswitch_done\@
+
+#ifdef ARCH_RISCV_FPU
+.Lirq_frame\@:
+    /* Resume the trap frame that the short switch frame points at. */
+    addi        sp, sp, RT_HW_SWITCH_CONTEXT_SIZE * SZREG
+    REG_L       tp, FRAME_OFF_TP(sp)
+#endif
+.Lswitch_done\@:
     csrw        CSR_EPC, ra
 .endm
 
@@ -268,10 +289,14 @@ rt_hw_context_switch_interrupt:
     addi    sp, sp, -(RT_HW_SWITCH_CONTEXT_SIZE * SZREG)
     /* Resume according to the privilege mode saved in the exception frame. */
     la      ra, rt_hw_resume_interrupt
-    /* Save the entire context */
+    /* The FPU state remains in the trap frame above this short frame. */
     li      TMP, (K_XSTATUS_DEFAULT & ~SR_PIE)
     REG_S   TMP, REG_IDX(XSTATUS) * SZREG(sp)
     REG_S   ra, REG_IDX(RA) * SZREG(sp)
+#ifdef ARCH_RISCV_FPU
+    li      TMP, 1
+    REG_S   TMP, CTX_SWITCH_FLAG_OFF(sp)
+#endif
 
     /* Save SP of from-thread */
     mv      a0, sp
