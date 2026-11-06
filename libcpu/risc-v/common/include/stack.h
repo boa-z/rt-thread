@@ -46,7 +46,10 @@
     #define CTX_GENERAL_REG_NR          34
     #define FRAME_OFF_SP                (33 * SZREG)
 #endif
-#define CTX_ALL_REG_NR                  (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_FCSR_REG_NR + CTX_VECTOR_REG_NR)
+#define CTX_FRAME_WORDS                 (CTX_GENERAL_REG_NR + CTX_FPU_REG_NR + CTX_FCSR_REG_NR + CTX_VECTOR_REG_NR)
+/* Pad the trap frame so sp is 16-byte aligned for the C trap handler. */
+#define CTX_FRAME_PAD_REG_NR            (((16 - ((CTX_FRAME_WORDS * (__riscv_xlen / 8)) & 15)) & 15) / (__riscv_xlen / 8))
+#define CTX_ALL_REG_NR                  (CTX_FRAME_WORDS + CTX_FRAME_PAD_REG_NR)
 
 #define FRAME_OFF_XSTATUS               (2 * SZREG)
 #define FRAME_OFF_XCAUSE                (3 * SZREG)
@@ -133,16 +136,21 @@ struct rt_hw_stack_frame
 #ifdef ARCH_RISCV_FPU
     rt_ubase_t f[CTX_FPU_REG_NR];   /* f0~f31 */
 #if CTX_FCSR_REG_NR
-    rt_ubase_t fcsr;
+    rt_ubase_t fcsr[CTX_FCSR_REG_NR];
 #endif
 #endif
 #ifdef ARCH_RISCV_VECTOR
     rt_ubase_t v[CTX_VECTOR_REG_NR];
 #endif
+#if CTX_FRAME_PAD_REG_NR
+    rt_ubase_t pad[CTX_FRAME_PAD_REG_NR];
+#endif
 };
 
 RT_STATIC_ASSERT(riscv_trap_frame_size,
         sizeof(struct rt_hw_stack_frame) == CTX_ALL_REG_NR * sizeof(rt_ubase_t));
+RT_STATIC_ASSERT(riscv_trap_frame_align,
+        (sizeof(struct rt_hw_stack_frame) % 16) == 0);
 #endif /* __ASSEMBLY__ */
 
 #endif /* __STACK_H__ */

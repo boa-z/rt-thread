@@ -55,13 +55,17 @@
 .endm
 
 .macro SAVE_ALL
+    /* Keep the trap frame 16-byte aligned for the C ABI. */
+#if CTX_FRAME_PAD_REG_NR
+    addi    sp, sp, -CTX_FRAME_PAD_REG_NR * SZREG
+#endif
+#ifdef ARCH_RISCV_VECTOR
+    /* Reserve vector registers first so they sit above the FPU frame. */
+    addi    sp, sp, -CTX_VECTOR_REG_NR * SZREG
+#endif
 #ifdef ARCH_RISCV_FPU
     /* Reserve float registers and fcsr */
     addi    sp, sp, -(CTX_FPU_REG_NR + CTX_FCSR_REG_NR) * SZREG
-#endif
-#ifdef ARCH_RISCV_VECTOR
-    /* Reserve float registers */
-    addi    sp, sp, -CTX_VECTOR_REG_NR * SZREG
 #endif
 
     /* Save general registers */
@@ -156,7 +160,8 @@
     REG_S   t0, (CTX_FPU_REG_NR * SZREG)(t1)
 #endif
 
-    /* Clean FS domain */
+    /* Clean FS domain (fcsr is not a status mask). */
+    li      t0, SR_FS
     csrc    CSR_STATUS, t0
 
     /* Clean status would clr sr_sd; */
@@ -250,7 +255,8 @@
     csrw    0x003, t0
 #endif
 
-    /* Clean FS domain */
+    /* Clean FS domain (fcsr is not a status mask). */
+    li      t0, SR_FS
     csrc    CSR_STATUS, t0
 
     /* Clean status would clr sr_sd; */
