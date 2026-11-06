@@ -180,8 +180,8 @@ python3 tools/mk_firmware.py \
 编译器      riscv64-unknown-elf-gcc 16.1.0
 Newlib      4.6.0
 配置        默认 .config（GPIO + console，无显示/LVGL）
-ELF         47528 text / 744 data / 6992 bss
-rtthread.bin 48280 bytes
+ELF         47608 text / 744 data / 10064 bss
+rtthread.bin 48360 bytes
 d12p_os.itb  51200 bytes
 最终 .img    134656 bytes（占位 bootloader，文件名带 PLACEHOLDER）
 ```

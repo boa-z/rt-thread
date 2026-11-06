@@ -38,8 +38,8 @@ Build verification with GCC 16.1.0 (Newlib 4.6.0), Python 3.13.15 and SCons 4.8.
 
 | Configuration | text | data | bss |
 |---|---:|---:|---:|
-| `configs/d213-minimal.config` | 63696 | 1056 | 11464 |
-| `configs/d213-default.config` (peripherals + display + GE + GT911) | 113688 | 4360 | 12648 |
+| `configs/d213-minimal.config` | 63760 | 1056 | 14536 |
+| `configs/d213-default.config` (peripherals + display + GE + GT911) | 113752 | 4360 | 15720 |
 | default + lvgl-aic-standalone software path | not rebuilt in this migration | - | - |
 
 Xuantie GCC 10.2.0 (V2.6.1) also builds the same source; object sizes differ
@@ -51,7 +51,7 @@ Packaging with the current SDK assets:
 
 | Configuration | `rtthread.bin` | `d21x_os.itb` | final `.img` |
 |---|---:|---:|---:|
-| minimal | 64800 | 67584 | 916992 |
+| minimal | 65056 | 67584 | 916992 |
 | default (with GT911) | 118280 | 120832 | 970240 |
 
 Size alone is not hardware validation.
