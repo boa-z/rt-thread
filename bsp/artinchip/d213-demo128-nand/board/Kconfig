@@ -7,10 +7,6 @@ config AIC_DRAM_TOTAL_SIZE
         Total DDR size of the D213 demo128 board.  The bootloader loads the
         RT-Thread image at 0x40000000; the remaining DDR is used as heap.
 
-config AIC_INTERRUPT_STACK_SIZE
-    hex "Interrupt stack size"
-    default 0x2000
-
 config AIC_BOOTLOADER_RESERVED_SIZE
     hex "Reserved DDR for the ArtInChip bootloader"
     default 0x800000

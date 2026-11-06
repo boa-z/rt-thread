@@ -58,8 +58,26 @@ link_lds = env.Command('link.lds',
 # The RISC-V common SConscript decides at parse time whether the BSP
 # provides link.lds.  Generate it before PrepareBuilding() so a clean build
 # always uses the ArtInChip memory layout instead of libcpu/riscv/link.lds.
-if os.path.exists('rtconfig.h'):
-    aic_link_lds_action(['link.lds'], [], env)
+def aic_toolchain_free():
+    # These operations do not execute target build commands.  Keep the
+    # parse-time link.lds probe out of them so a missing cross toolchain
+    # cannot break configuration, help, clean, dry-run or dist commands.
+    for opt in ('menuconfig', 'defconfig', 'guiconfig', 'help', 'clean',
+                'no_exec', 'make-dist', 'make-dist-ide', 'dist_strip',
+                'cscope', 'target'):
+        try:
+            if GetOption(opt):
+                return True
+        except Exception:
+            pass
+    return False
+
+if os.path.exists('rtconfig.h') and not aic_toolchain_free():
+    try:
+        aic_link_lds_action(['link.lds'], [], env)
+    except OSError:
+        # The real build will report the missing toolchain via EndBuilding.
+        pass
 
 def aic_link_action(target, source, env):
     """

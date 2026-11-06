@@ -39,36 +39,39 @@ RTT_EXEC_PATH=/opt/homebrew/bin \
   python3 tools/check_elf.py --elf rtthread.elf
 ```
 
-当前结果：
+当前结果（字段值随配置变化）：
 
 ```text
-D126 ELF check: PASS
-  entry        : 0x40000000
-  start        : 0x40000000
-  vectors      : 0x40008180 (aligned)
-  boot stack   : 0x4000c670..0x4000e670
-  heap         : 0x4000e670..0x40800000 (8134 KiB)
-
-text    data    bss     dec     hex
-44128   736     5880    50744   c638
+ArtInChip RISC-V check: PASS
+  ELF          : ELF32, single-float ABI
+  entry/_start : 0x40000000
+  trap vector  : 0x40000180 (direct mode)
+  controler    : CLIC
+  BSS          : ...
+  percpu       : ...
+  heap         : ... -> 0x40800000
 ```
 
-`rtthread.bin` 由 ELF 的单个 PT_LOAD 段生成，大小等于 `seg0.bin`。
-BSS 不进入镜像，由 `startup_gcc.S` 清零。
+`rtthread.bin` 由 ELF 的 PT_LOAD 段生成，大小等于 `seg0.bin`。
+BSS 不进入镜像，由 common `riscv_bss_init()` 清零。
 
 ## 3. ELF 检查内容
 
-`tools/check_elf.py` 检查：
+共享检查器 `bsp/artinchip/tools/check_elf.py` 检查：
 
-- ELF32；
-- RISC-V machine；
-- RVC + single-float ABI；
+- ELF32/ELF64、RISC-V、RVC、单/双精度 ABI；
 - entry 和 `_start` 都是 `0x40000000`；
-- 第一个 PT_LOAD 的 vaddr 是 `0x40000000`；
-- `__Vectors` 64 字节对齐且在文件支持的 LOAD 段内；
-- `__irq_stack_bottom < __rt_rvstack <= __heap_start`；
-- BSS 不与 heap 重叠；
-- 必需符号存在。
+- `system_vectors` 64 字节对齐；
+- `__text_start == entry`；
+- BSS、`.percpu`、heap 不重叠；
+- 必需 symbol：`system_vectors`、`rt_hw_trap`、
+  `rt_hw_interrupt_init`、`rt_hw_context_switch*`、
+  `riscv_timer_rdtime`、`riscv_timer_set_compare`、
+  `platform_get_plic_base` 或 `platform_get_clic_base`；
+- 拒绝旧的 `__Vectors`、`Default_IRQHandler`、`PendSV_Handler`、
+  `trap_entry`、`SW_handler`；
+- 可选 `--map` 检查旧 `libcpu/rv64`、`common64`、`legacy_common`
+  或 BSP `cpu/` 对象没有参与链接。
 
 它不能证明镜像可以启动；HW 验证仍需串口日志。
 
@@ -177,10 +180,10 @@ python3 tools/mk_firmware.py \
 编译器      riscv64-unknown-elf-gcc 16.1.0
 Newlib      4.6.0
 配置        默认 .config（GPIO + console，无显示/LVGL）
-ELF         44128 text / 736 data / 5880 bss
-rtthread.bin 44912 bytes
-d12p_os.itb  47104 bytes
-最终 .img    130560 bytes（占位 bootloader，文件名带 PLACEHOLDER）
+ELF         47528 text / 744 data / 6992 bss
+rtthread.bin 48280 bytes
+d12p_os.itb  51200 bytes
+最终 .img    134656 bytes（占位 bootloader，文件名带 PLACEHOLDER）
 ```
 
 RT-Thread 版本字符串包含构建日期/时间，因此每次重新构建的 ELF/ITB/IMG

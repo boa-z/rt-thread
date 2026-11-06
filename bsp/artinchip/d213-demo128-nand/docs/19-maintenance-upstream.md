@@ -5,7 +5,7 @@
 | 依赖 | 版本/来源 |
 |---|---|
 | RT-Thread | v5.3.0（本仓库分支 `bsp/artinchip-d21x`） |
-| CPU Port | 上游 `libcpu/risc-v/common` + `libcpu/risc-v/rv64` |
+| CPU Port | 上游 `libcpu/risc-v/common`（Next RISC-V） |
 | 工具链 | Xuantie-900 elf newlib GCC V2.6.1（GCC 10.2.0） |
 | SCons | 4.8.1（已验证） |
 | Python | 3.13.15（已验证） |

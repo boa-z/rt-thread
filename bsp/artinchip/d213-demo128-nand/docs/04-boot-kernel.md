@@ -1,129 +1,109 @@
 # 04 系统启动与内核移植
 
-## 4.1 从加电到 `main()` 的完整链路
+本 BSP 已迁移到 RT-Thread 官方 **Next RISC-V common port**（PR #10320）。
+启动、Trap、上下文切换、中断控制器适配和定时器核心来自
+`libcpu/risc-v/common`，D213 BSP 只保留板/SoC 相关部分。
+
+## 4.1 从加电到 `main()`
 
 ```mermaid
 flowchart TD
     A[BROM] --> B[SPL / PBP]
-    B --> C[DDR 初始化]
+    B --> C[DDR3 初始化]
     C --> D[ArtInChip Bootloader]
     D --> E[校验并加载 FIT/ITB]
     E --> F[跳转 0x40000000]
-    F --> G[_start]
-    G --> H[设置 gp/sp/mtvec]
-    H --> I[清 BSS]
-    I --> J[entry / rt_hw_board_init]
-    J --> K[FPU、CMU、Pinmux、堆]
-    K --> L[PLIC、UART0、CLINT]
-    L --> M[rt_components_board_init]
-    M --> N[启动调度器]
-    N --> O[main thread]
-    O --> P[rt_components_init]
-    P --> Q[main]
+    F --> G[common _start]
+    G --> H[init_cpu_common / gp / 临时栈]
+    H --> I[riscv_early_setup]
+    I --> J[riscv_bss_init]
+    J --> K[riscv_boot_hart_init]
+    K --> L[kernel_start: IRQ stack + mtvec]
+    L --> M[rtthread_startup]
+    M --> N[rt_hw_board_init]
+    N --> O[scheduler]
+    O --> P[main thread]
 ```
 
-### BROM
+### Bootloader
 
-D21x 片内 Boot ROM 根据启动介质顺序选择 SD、SPI NAND、SPI NOR 或 eMMC，加载原厂 SPL/PBP。BSP 不参与这一阶段。
+原厂 Bootloader 完成 DDR3、SPI NAND、分区表和 FIT 校验，然后跳到
+`0x40000000`。BSP 不重复初始化 DDR/PLL/NAND。
 
-### SPL / PBP / Bootloader
+D213 demo128 Bootloader 位于 DDR 顶部附近：加载地址
+`0x47B80000`，入口 `0x47B80100`。BSP 堆布局保留顶部 8 MB。
 
-原厂 Bootloader 完成：
+### Common Startup
 
-- DDR3 初始化（参数来自 `ddr_init.json`）；
-- SPI NAND 控制器初始化；
-- 分区表解析；
-- FIT/ITB 校验与加载；
-- 跳转到 OS 入口。
+`libcpu/risc-v/common/startup_gcc.S`：
 
-D213 demo128 的 Bootloader 位于 DDR 顶部附近：加载地址 `0x47B80000`，入口 `0x47B80100`。BSP 在堆布局中保留顶部 8 MB，防止覆盖 Bootloader。
+1. 读取 `mhartid`，保存 `a1`；
+2. `init_cpu_common()`：清 `mie/mip`、设置 `gp`、清 `FS/VS`、清
+   `mscratch`；
+3. 使用 `.percpu` 中的早期栈；
+4. 调用 BSP 可覆盖的 `riscv_early_setup()`；
+5. 清 `__bss_start..__bss_end`；
+6. `riscv_boot_hart_init()`；
+7. `kernel_start`：初始化中断栈，设置 `mtvec = system_vectors`，
+   进入 `rtthread_startup()`。
 
-### FIT/ITB
+D213 没有提供 BSP 根目录 `startup_gcc.S`，因此使用 common startup。
+板级差异通过 `board/board.c` 和 `rt_hw_board_init()` 完成。
 
-`tools/mk_firmware.py` 调用原厂 `mk_image.py` 的 `elf2itb` 流程，把 `rtthread.elf` 转成 `d21x_os.itb`，再与 `bootloader.aic`、`env.bin`、DDR 初始化资源打包为 `.img`。
-
-FIT 的加载地址和入口地址都是 `0x40000000`。
-
-## 4.2 `_start` 汇编
-
-`board/start_gcc.S` 做最少的工作：
-
-1. 设置 `gp`（全局指针）；
-2. 关闭 `mie`/`mip`；
-3. 设置 `mtvec = trap_entry`；
-4. 设置启动栈 `sp = __rt_rvstack`；
-5. 置 `mstatus.FS = 1`，启用 FPU；
-6. 清零 `__bss_start__` 到 `__bss_end__`；
-7. 调用 `entry()`。
-
-不在此处初始化 DDR、PLL 或 NAND；这些已由 Bootloader 完成。
-
-## 4.3 C Runtime 与板级初始化
-
-`rt_hw_board_init()` 的顺序：
+## 4.2 板级初始化
 
 ```c
-aic_cpu_init();                 /* FPU + C906 mxstatus */
-aic_board_sysclk_init();        /* 外设门控与复位 */
-aic_board_pinmux_init();        /* UART 引脚 */
-rt_system_heap_init(...);       /* DDR 堆 */
-rt_hw_interrupt_init();         /* PLIC */
-rt_hw_serial_init();            /* UART0/1/... */
-rt_hw_tick_init();              /* CLINT */
-rt_components_board_init();     /* GPIO 等 INIT_BOARD_EXPORT */
+riscv_isa_ext_set(I/M/A/F/D/C);
+aic_cpu_init();                 /* FPU FS、C906 mxstatus */
+aic_board_sysclk_init();
+aic_board_pinmux_init();
+rt_system_heap_init(...);
+rt_hw_interrupt_init();         /* common PLIC + local INTC */
+aic_plic_quirk_init();          /* D21x PER 寄存器 */
+riscv_timer_set_frequency(BSP_CLINT_FREQ);
+rt_hw_tick_init();              /* common riscv_timer */
+rt_hw_serial_init();
+rt_components_board_init();
 rt_console_set_device("uart0");
 ```
 
-注意：`rt_hw_serial_init()` 直接注册 UART，不依赖 `INIT_DEVICE_EXPORT`；因此控制台在组件初始化之前就可用。
+`rt_hw_serial_init()` 直接注册 UART，因此控制台在组件初始化前可用。
 
-## 4.4 Machine Mode
+## 4.3 Machine Mode 与 Trap
 
-D21x 的 RT-Thread 运行在 M-mode：
+- `mtvec = system_vectors`（direct mode）；
+- `rt_hw_trap()` 位于 `libcpu/risc-v/common/trap.c`；
+- 机器定时器 IRQ 7 由 `riscv_timer_isr()` 处理；
+- 机器外部 IRQ 11 由 common PLIC 处理；
+- `rt_hw_interrupt_install()`、mask/umask 由 common 提供；
+- 外设中断必须使用 `IRQ_PLIC(hwirq)`，不能把硬件 IRQ 号直接当
+  框架 IRQ 号。
 
-- `mtvec` 指向 `libcpu/risc-v/rv64/trap.c` 的 `trap_entry`；
-- 机器定时器中断由 CLINT 产生；
-- 机器外部中断由 PLIC 分发；
-- 没有 S-mode、页表或用户态隔离。
+D213 的 PLIC 布局与标准 SiFive PLIC 兼容，额外需要写
+`0x20000000 + 0x1FFFFC` 的 PER 位。该操作由
+`board/interrupt.c:aic_plic_quirk_init()` 完成。
 
-这意味着：
+## 4.4 FPU 上下文
 
-- 所有驱动都在最高特权级，错误指针可能直接导致系统异常；
-- 没有 MMU 保护，DMA 缓冲区必须按物理地址理解；
-- 中断上下文不能调用可能睡眠的 API。
+上游 common port 原先只在 Trap 路径保存浮点寄存器，直接线程切换
+路径不保存 FPU。本分支对
+`libcpu/risc-v/common/context_gcc.S` 和 `stack.c` 做了最小补丁：
 
-## 4.5 Trap 与异常
+- 直接线程切换保存/恢复 `f0`-`f31`；
+- 保存/恢复 `fcsr`；
+- 切换帧按 16 字节对齐；
+- 新线程帧包含 FPU/fcsr 区域。
 
-`libcpu/risc-v/rv64/trap.c` 负责保存/恢复现场，并调用：
+`applications/fpu_test_gcc.S` 验证 callee-saved 浮点寄存器在真实
+线程切换后的值。该测试是 HW 验证项，当前 BUILD/STATIC PASS，实机
+结果待补。
 
-- `rt_hw_tick_isr()`：机器定时器；
-- `rt_hw_irq_isr()`：机器外部中断；
-- 异常处理：打印 `mcause`、`mepc`、`mtval` 等信息。
-
-当前 BSP 没有额外的异常诊断扩展。若出现异常，先确认：
-
-1. `mepc` 是否落在合法代码段；
-2. `mtval` 是否是非法访问地址；
-3. 栈是否溢出（`RT_USING_OVERFLOW_CHECK` 已启用）；
-4. 中断是否在未初始化 PLIC 的情况下被打开。
-
-## 4.6 FPU 上下文
-
-RISC-V 通用 Port 在上下文切换时保存/恢复 `f0`-`f31`，但**不保存 `fcsr`**。这来自上游 `libcpu/risc-v/common` 的实现，本 BSP 没有修改内核。
-
-影响：
-
-- 普通浮点运算、函数调用和线程切换是安全的；
-- 如果两个线程使用不同的舍入模式、异常标志或动态精度，`fcsr` 可能互相影响；
-- 需要严格 IEEE 状态隔离的产品必须修改 CPU Port 或在应用层保存/恢复 `fcsr`。
-
-`applications/fpu_test_gcc.S` 验证的是 callee-saved 浮点寄存器在真实线程切换后的值，不验证 `fcsr`。
-
-## 4.7 内存布局
+## 4.5 内存布局
 
 ```text
 0x40000000  .text / .rodata / .data
             .bss
-            interrupt stack
+            .percpu（common 早期栈 + IRQ 栈在 .bss）
             heap
 0x45800000  __fb_start（显示配置：32 MB Framebuffer 保留区）
 0x47800000  __fb_end / heap end / Bootloader 保留区起点
@@ -131,38 +111,40 @@ RISC-V 通用 Port 在上下文切换时保存/恢复 `f0`-`f31`，但**不保�
 0x48000000  DDR end (128 MB)
 ```
 
-显示关闭时 `AIC_FB_RESERVED_SIZE=0`，`__fb_start = __heap_end = 0x47800000`，原最小堆布局不变。
+链接脚本 `board/link.lds.S` 由 SCons 预处理生成 `link.lds`，提供
+common port 需要的：
 
-链接脚本 `board/link.lds.S` 在构建时由 SCons 预处理生成 `link.lds`，并包含以下断言：
+- `__text_start`、`__bss_start/__bss_end`；
+- `__percpu_start/__percpu_end/__percpu_real_end`；
+- `_end`；
+- `__heap_start/__heap_end`。
 
-- `.data`/`.bss` 不越过堆起点；
-- 堆结束早于 Bootloader 保留区；
-- 中断栈位于合法 RAM；
-- 入口为 `_start`。
+并断言 `.data`/`.bss`/`.percpu` 不越过堆起点。
 
-`AIC_BOOTLOADER_RESERVED_SIZE` 默认 `0x800000`（8 MB）。不要为了让镜像变大而删除这个保留区。
+## 4.6 Tick
 
-## 4.8 Tick 与长期计时
+common `riscv_timer.c` 负责 Tick；BSP 只覆盖：
 
-`board/tick.c` 使用 CLINT `mtime`/`mtimecmp`：
+- `riscv_timer_rdtime()`：读取 C906 `rdtime` CSR；
+- `riscv_timer_set_compare()`：写 `0x24004000` 的 `mtimecmp`；
+- `rt_hw_get_clock_timer_freq()`：返回 `BSP_CLINT_FREQ = 4 MHz`。
 
-- `BSP_CLINT_FREQ = 4000000`；
-- `RT_TICK_PER_SECOND = 1000`；
-- 每次中断把 `mtimecmp` 增加固定间隔，而不是从“当前时间”重新计算；
-- 如果已经落后超过一个间隔，则从当前时间重新起步，避免中断风暴。
+`RT_TICK_PER_SECOND = 1000`，tick 间隔 4000 个 CLINT 周期。
 
-因此正常负载下不会因为中断延迟累积 Tick 漂移；长时间断电或调试暂停后，系统时间不会补偿停机时间。
+## 4.7 中断栈
 
-## 4.9 中断栈
+common port 使用 `ARCH_RISCV_USING_IRQ_STACK`，每个 CPU 在 `.bss`
+中分配 `ARCH_RISCV_IRQ_STACK_SIZE`（默认 1024 字节）中断栈。Trap
+现场保存在被中断线程栈上，C 级 `rt_hw_trap()` 在中断栈上运行。
 
-`AIC_INTERRUPT_STACK_SIZE` 默认 `0x2000`（8 KB）。中断栈用于 Trap 现场和 ISR 调用链。若后续接入显示/网络/文件系统并在中断中做大量工作，应评估增大该值，或把耗时工作移到线程。
+如果后续在 ISR 中增加深调用链，可在 Kconfig 增大
+`ARCH_RISCV_IRQ_STACK_SIZE`。
 
-## 4.10 启动失败排查顺序
+## 4.8 启动失败排查
 
-1. 串口是否有 Bootloader 日志：没有则检查供电、启动介质、串口线；
-2. 是否打印 `RT-Thread 5.3.0`：没有则检查 FIT 加载地址、入口、镜像是否写入 `os` 分区；
-3. 是否卡在 PLIC/UART 初始化：检查 UART0 pinmux 和时钟门控；
-4. 是否在 `main()` 前异常：检查新增 `INIT_DEVICE_EXPORT` 驱动；
-5. 是否反复重启：检查看门狗是否被意外启动、堆是否覆盖 Bootloader。
-
-详细测试方法见 [17-testing-troubleshooting.md](17-testing-troubleshooting.md)。
+1. 无 Bootloader 日志：检查供电、启动介质、串口；
+2. 无 RT-Thread banner：检查 FIT 加载地址、入口、`os` 分区；
+3. 卡在 PLIC/UART：检查 UART0 pinmux、时钟门控、PLIC PER；
+4. `main()` 前异常：检查 `riscv_early_setup`、栈和新增
+   `INIT_DEVICE_EXPORT` 驱动；
+5. 反复重启：检查看门狗、堆是否覆盖 Bootloader。

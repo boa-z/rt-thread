@@ -6,7 +6,9 @@ D213EC-DEMO-V4-0 board, using the `demo128-nand` software configuration.
 - SoC: ArtInChip D213 (D21x family)
 - CPU: T-Head C906, RV64GC (IMAFDC), machine mode
 - Board: D213EC-DEMO-V4-0 (demo128-nand configuration), 128 MB DDR3, 128 MB SPI NAND
-- Kernel: RT-Thread v5.3.0
+- Kernel: RT-Thread v5.3.0 with the Next RISC-V common port (PR #10320)
+- Upstream baseline: `89c70abccd0359f9f7ba9df2e81dbe764d3e78d3`
+- CPU port: `libcpu/risc-v/common` M-mode common startup/trap/timer
 - Console: UART0, PA.0/PA.1, 115200 8N1
 - Firmware load address / entry: `0x40000000`
 
@@ -14,7 +16,7 @@ D213EC-DEMO-V4-0 board, using the `demo128-nand` software configuration.
 
 | Area | State |
 |---|---|
-| M-mode startup, PLIC, CLINT, scheduler, IPC, FPU, FinSH | HW before directory reorg; re-test pending |
+| M-mode startup, PLIC, CLINT, scheduler, IPC, FPU, FinSH | BUILD + STATIC with Next RISC-V common port; HW re-test pending |
 | UART0 console | HW before directory reorg; re-test pending |
 | UART1/2/4 multi-instance | BUILD + STATIC, hardware pending |
 | GPIO / pin IRQ | BUILD + STATIC, hardware pending |
@@ -36,8 +38,9 @@ Build verification with GCC 16.1.0 (Newlib 4.6.0), Python 3.13.15 and SCons 4.8.
 
 | Configuration | text | data | bss |
 |---|---:|---:|---:|
-| default `.config` (peripherals + display + GE + GT911) | 112480 | 4328 | 11400 |
-| default + lvgl-aic-standalone software path | 586192 | 4496 | 12832 |
+| `configs/d213-minimal.config` | 63696 | 1056 | 11464 |
+| `configs/d213-default.config` (peripherals + display + GE + GT911) | 113688 | 4360 | 12648 |
+| default + lvgl-aic-standalone software path | not rebuilt in this migration | - | - |
 
 Xuantie GCC 10.2.0 (V2.6.1) also builds the same source; object sizes differ
 because the two toolchains use different code generation. Display/GE hardware
@@ -48,7 +51,8 @@ Packaging with the current SDK assets:
 
 | Configuration | `rtthread.bin` | `d21x_os.itb` | final `.img` |
 |---|---:|---:|---:|
-| default `.config` (with GT911) | 116808 | 120832 | 970240 |
+| minimal | 64800 | 67584 | 916992 |
+| default (with GT911) | 118280 | 120832 | 970240 |
 
 Size alone is not hardware validation.
 
@@ -180,7 +184,7 @@ the vendor `os` partition (about 4 MB in the demo128 layout).
 
 ```text
 applications/   bring-up self-test, FPU test, peripheral MSH commands
-board/          startup, clock, pinmux, PLIC, CLINT, linker script
+board/          common-port glue, clock, pinmux, PLIC quirk, timer, linker script
 drivers/        RT-Thread adapters: UART/GPIO/I2C/CAN/PWM/WDT/RTC/DE/GE
 vendor/         curated ArtInChip HAL + minimal compatibility layer
 lvgl/           optional LVGL 9.6.0 port, GT911 input and MSH demo
@@ -197,9 +201,12 @@ Luban-Lite (Apache-2.0) and retain their original copyright notices. The
 BSP-specific compatibility layer and clock provider are documented in
 `docs/20-vendor-source-license.md`.
 
-The CPU port is the upstream RT-Thread RISC-V machine-mode port. No vendor
-binary is stored in this BSP; the bootloader and PBP are supplied by the
-user's SDK at packaging time.
+The CPU startup, trap, context switch, interrupt-controller adapter and
+timer core are the upstream RT-Thread Next RISC-V common port. The D213 BSP
+only supplies the C906 cache range helpers, the PLIC MMIO/PER quirk and the
+D21x CLINT `rdtime`/`mtimecmp` accessors. No vendor binary is stored
+in this BSP; the bootloader and PBP are supplied by the user's SDK at
+packaging time.
 
 ## Limitations
 
@@ -211,4 +218,5 @@ user's SDK at packaging time.
 - No SPI NAND/MTD/filesystem, MIPI/RGB display, touch, LVGL hardware run,
   USB, SDIO, Ethernet, Wi-Fi, audio or video support yet.
 - No DMA or cache-maintenance integration.
-- The upstream RISC-V port saves `f0`-`f31` but not `fcsr`.
+- The common port was extended in `libcpu/risc-v/common` to save/restore
+  `f0`-`f31` and `fcsr` across direct thread context switches.

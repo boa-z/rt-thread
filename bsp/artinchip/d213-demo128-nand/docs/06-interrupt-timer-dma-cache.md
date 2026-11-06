@@ -1,28 +1,31 @@
 # 06 中断、Timer、DMA 与 Cache
 
+本 BSP 使用 RT-Thread Next RISC-V common port 的中断/Timer 框架。
+
 ## 6.1 中断注册
 
-BSP 使用 RT-Thread 的 `rt_hw_interrupt_install()` 注册 PLIC 中断：
+外设驱动使用 common `rt_hw_interrupt_install()`，并且必须把硬件 PLIC
+IRQ 号转换成框架 IRQ 号：
 
 ```c
-rt_hw_interrupt_install(CAN0_IRQn, aic_can_isr, &handle, "can0");
-rt_hw_interrupt_umask(CAN0_IRQn);
+rt_hw_interrupt_install(IRQ_PLIC(CAN0_IRQn), aic_can_isr, &handle, "can0");
+rt_hw_interrupt_umask(IRQ_PLIC(CAN0_IRQn));
 ```
 
-`board/interrupt.c` 维护 `aic_irq_table[128]`：
+`IRQ_PLIC(hwirq)` 等于 `irq_plic_base + hwirq`。D213 的
+`irq_plic_base` 由 common local INTC 数量决定，不能假设等于 0。
 
-```mermaid
-flowchart LR
-    A[PLIC claim] --> B[irq number]
-    B --> C[aic_irq_table[irq].handler]
-    C --> D[ISR]
-    D --> E[PLIC complete]
+`board/interrupt.c` 只提供：
+
+```c
+platform_get_plic_base();   /* 0x20000000 */
+platform_get_plic_size();   /* 0x210000 */
+platform_get_plic_quirks(); /* 0 */
+aic_plic_quirk_init();      /* D21x PER=1 */
 ```
 
-- 未注册的中断打印 `Unhandled IRQ n`；
-- `rt_hw_interrupt_mask()` 关闭 PLIC enable 位；
-- `rt_hw_interrupt_umask()` 打开 PLIC enable 位；
-- 中断优先级默认 1，阈值 0。
+`irq_desc[]`、mask/umask、claim/complete 都由
+`libcpu/risc-v/common/interrupt.c` 和 `pic-sifive-plic.c` 负责。
 
 ## 6.2 中断上下文约束
 
@@ -42,52 +45,41 @@ ISR 中不能：
 
 ## 6.3 PLIC 细节
 
-D21x 的 PLIC 是 T-Head/C906 兼容布局，但与标准 SiFive PLIC 的 enable/claim 偏移不同。当前实现：
+D21x 的 PLIC 与标准 SiFive PLIC 的 priority/enable/context 偏移兼容：
 
-```c
-#define AIC_PLIC_PRIO_BASE   (AIC_PLIC_BASE + 0x0000000)
-#define AIC_PLIC_ENABLE_BASE (AIC_PLIC_BASE + 0x0002000)
-#define AIC_PLIC_PER         (AIC_PLIC_BASE + 0x01FFFFC)
-#define AIC_PLIC_THRESHOLD   (AIC_PLIC_BASE + 0x0200000)
-#define AIC_PLIC_CLAIM       (AIC_PLIC_BASE + 0x0200004)
+```text
+priority      +0x000000
+enable        +0x002000
+M-mode context +0x200000
+  threshold   +0x0
+  claim       +0x4
 ```
 
-如果移植到其他 D21x 型号，必须核对 PLIC 布局，不能直接假设与 D213 相同。
+额外需要一个 vendor PER 位：
+
+```c
+*(volatile uint32_t *)(AIC_PLIC_BASE + 0x01FFFFC) = 1;
+```
+
+`aic_plic_quirk_init()` 在 `rt_hw_interrupt_init()` 之后调用。不要删除
+这一步，否则 D21x PLIC 的优先级功能可能不生效。
 
 ## 6.4 Tick 与延时
 
-### Tick
+common `riscv_timer.c` 负责 Tick 和 `rt_hw_us_delay()`。D213 只覆盖：
 
 ```c
-aic_tick_interval = AIC_CLINT_FREQ / RT_TICK_PER_SECOND; // 4 MHz / 1000 = 4000
-aic_next_tick = aic_read_time() + aic_tick_interval;
-aic_set_mtimecmp(aic_next_tick);
+rt_uint64_t riscv_timer_rdtime(void);                 /* rdtime CSR */
+void riscv_timer_set_compare(rt_uint64_t value);      /* 0x24004000 */
+rt_uint64_t rt_hw_get_clock_timer_freq(void);         /* 4 MHz */
 ```
 
-中断处理：
+`RT_TICK_PER_SECOND = 1000`，tick 间隔 4000 个 CLINT 周期。common
+timer 从“当前时间 + 间隔”重新装载；如果 ISR 延迟过大，会从当前时间
+重新起步，避免连续追赶造成中断风暴。
 
-```c
-rt_tick_increase();
-aic_next_tick += aic_tick_interval;
-if (aic_next_tick <= now)
-    aic_next_tick = now + aic_tick_interval;
-aic_set_mtimecmp(aic_next_tick);
-```
-
-优点：不会把 ISR 延迟累积成 Tick 漂移。
-
-### 微秒延时
-
-```c
-void rt_hw_us_delay(rt_uint32_t us)
-{
-    uint64_t start = aic_read_time();
-    uint64_t ticks = (uint64_t)us * (AIC_CLINT_FREQ / 1000000U);
-    while ((aic_read_time() - start) < ticks);
-}
-```
-
-这是忙等，适合寄存器时序，不适合长延时。长延时用 `rt_thread_mdelay()`。
+`rt_hw_us_delay()` 是忙等，适合寄存器时序，不适合长延时；长延时用
+`rt_thread_mdelay()`。
 
 ## 6.5 中断性能与优先级
 
