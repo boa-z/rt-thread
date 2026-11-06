@@ -161,6 +161,9 @@ def main():
         else:
             with open(args.map, "r", errors="replace") as f:
                 text = f.read()
+            # GNU ld writes Windows separators when the BSP is built from a
+            # relative path; normalise so the same check works on all hosts.
+            text = text.replace("\\", "/")
             required_objs = [
                 "libcpu/risc-v/common/startup_gcc.o",
                 "libcpu/risc-v/common/context_gcc.o",

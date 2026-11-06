@@ -60,6 +60,23 @@ TARGETS = {
             "bsp.d213.smoke",
             "bsp.d213.fpu.context",
             "bsp.d213.can0.config",
+            "bsp.d213.spinand.ro",
+        ],
+    },
+    "d213-nand-readonly": {
+        "bsp": os.path.join(ARTICHIP_DIR, "d213-demo128-nand"),
+        "config": "configs/d213-nand-readonly.config",
+        "xlen": 64,
+        "intc": "plic",
+        "package": True,
+        "require_symbols": [
+            "rt_hw_qspi0_init",
+            "aic_spinand_ro_read_page",
+            "aic_spinand_ro_check_block",
+            "rt_mtd_nand_register_device",
+        ],
+        "require_strings": [
+            "read-only (program/erase/mark rejected)",
         ],
     },
     "d126-minimal": {
