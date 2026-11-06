@@ -48,6 +48,13 @@ def main():
     parser.add_argument("--xlen", type=int, choices=(32, 64), required=True)
     parser.add_argument("--entry", default="0x40000000")
     parser.add_argument("--intc", choices=("plic", "clic"), required=True)
+    parser.add_argument("--require-symbol", action="append", default=[],
+                        help="additional symbol that must be present")
+    parser.add_argument("--require-symbol-count", action="append", default=[],
+                        metavar="NAME=COUNT",
+                        help="minimum number of symbols with this exact name")
+    parser.add_argument("--require-string", action="append", default=[],
+                        help="literal string that must be present in the ELF")
     args = parser.parse_args()
 
     if not os.path.isfile(args.elf):
@@ -77,12 +84,14 @@ def main():
         fail(errors, "entry point 0x%s != 0x%x" % (m.group(1), entry))
 
     symbols = {}
+    symbol_counts = {}
     starts = []
     for line in run([nm, args.elf]).splitlines():
         parts = line.split()
         if len(parts) >= 3:
             name = parts[2]
             symbols[name] = int(parts[0], 16)
+            symbol_counts[name] = symbol_counts.get(name, 0) + 1
             if name == "_start":
                 starts.append(name)
 
@@ -102,6 +111,21 @@ def main():
     for name in required:
         if name not in symbols:
             fail(errors, "missing symbol: " + name)
+
+    for name in args.require_symbol:
+        if name not in symbols:
+            fail(errors, "missing required symbol: " + name)
+
+    for spec in args.require_symbol_count:
+        name, _, value = spec.partition("=")
+        try:
+            minimum = int(value)
+        except ValueError:
+            fail(errors, "bad --require-symbol-count: " + spec)
+            continue
+        if symbol_counts.get(name, 0) < minimum:
+            fail(errors, "expected at least %d '%s' symbols, found %d" % (
+                minimum, name, symbol_counts.get(name, 0)))
 
     forbidden = [
         "__Vectors", "Default_IRQHandler", "PendSV_Handler",
@@ -157,6 +181,13 @@ def main():
             for obj in forbidden_objs:
                 if obj in text:
                     fail(errors, "legacy object still linked: " + obj)
+
+    if args.require_string:
+        with open(args.elf, "rb") as f:
+            image = f.read()
+        for value in args.require_string:
+            if value.encode("utf-8") not in image:
+                fail(errors, "missing literal string: " + value)
 
     if errors:
         print("ArtInChip RISC-V check: FAIL (%d error(s))" % len(errors))

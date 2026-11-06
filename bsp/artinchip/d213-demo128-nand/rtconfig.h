@@ -234,6 +234,10 @@
 #define BSP_CLINT_FREQ 4000000
 /* end of Board options */
 
+/* Testing */
+
+/* end of Testing */
+
 /* On-chip Peripheral Drivers */
 
 #define BSP_USING_GPIO

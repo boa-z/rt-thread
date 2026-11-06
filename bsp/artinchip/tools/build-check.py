@@ -40,6 +40,28 @@ TARGETS = {
         "intc": "plic",
         "package": True,
     },
+    "d213-utest": {
+        "bsp": os.path.join(ARTICHIP_DIR, "d213-demo128-nand"),
+        "config": "configs/d213-utest.config",
+        "xlen": 64,
+        "intc": "plic",
+        "package": True,
+        "require_symbols": [
+            "utest_init",
+            "utest_testcase_run",
+            "__rt_utest_tc_tab_start",
+            "__rt_utest_tc_tab_end",
+        ],
+        "require_symbol_counts": [
+            "_utest_testcase=10",
+        ],
+        "require_strings": [
+            "components.utilities.utest.uassert",
+            "bsp.d213.smoke",
+            "bsp.d213.fpu.context",
+            "bsp.d213.can0.config",
+        ],
+    },
     "d126-minimal": {
         "bsp": os.path.join(ARTICHIP_DIR, "d126-demo124-nor"),
         "config": "configs/d126-minimal.config",
@@ -176,13 +198,22 @@ def main():
                 run([scons_cmd(), "-c"], cwd=bsp, log=log, check=False)
                 run([scons_cmd(), "-j", args.jobs], cwd=bsp, log=log)
 
-            check = run([sys.executable, CHECKER,
-                         "--elf", os.path.join(bsp, "rtthread.elf"),
-                         "--map", os.path.join(bsp, "rtthread.map"),
-                         "--xlen", str(info["xlen"]),
-                         "--entry", "0x40000000",
-                         "--intc", info["intc"]],
-                        cwd=bsp, log=log, check=False)
+            check_cmd = [
+                sys.executable, CHECKER,
+                "--elf", os.path.join(bsp, "rtthread.elf"),
+                "--map", os.path.join(bsp, "rtthread.map"),
+                "--xlen", str(info["xlen"]),
+                "--entry", "0x40000000",
+                "--intc", info["intc"],
+            ]
+            for symbol in info.get("require_symbols", []):
+                check_cmd += ["--require-symbol", symbol]
+            for spec in info.get("require_symbol_counts", []):
+                check_cmd += ["--require-symbol-count", spec]
+            for value in info.get("require_strings", []):
+                check_cmd += ["--require-string", value]
+
+            check = run(check_cmd, cwd=bsp, log=log, check=False)
             if check != 0:
                 results.append((name, "FAIL", "ELF/map check"))
                 continue
@@ -272,6 +303,9 @@ def write_manifest(results, stamp, sdk):
         f.write("## Flashability\n\n")
         f.write("- d213-minimal/default: real packaging requires the "
                 "Luban-Lite D21x bootloader assets.\n")
+        f.write("- d213-utest: separate test firmware; the ELF is checked "
+                "for utest symbols and expected testcase literals.  A "
+                "successful build is not a hardware test.\n")
         f.write("- d126-minimal: real packaging requires a D126 "
                 "d126-demo124-nor bootloader.  Placeholder images are "
                 "renamed *_PLACEHOLDER_DO_NOT_FLASH.img and are not "

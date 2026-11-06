@@ -27,3 +27,28 @@ config BSP_CLINT_FREQ
     default 4000000
 
 endmenu
+
+menu "Testing"
+
+config BSP_USING_UTEST
+    bool "Enable D213 BSP utest cases"
+    default n
+    select RT_USING_UTEST
+    help
+        Builds the D213-specific utest cases under utest/.  The cases use
+        the standard RT-Thread utest framework and are registered as
+        bsp.d213.*.  This option does not enable the official RT-Thread
+        test suite; enable RT-Thread Utestcases separately when needed.
+
+config BSP_UTEST_CAN_LOOPBACK
+    bool "Enable D213 CAN0 loopback utest"
+    default n
+    depends on BSP_USING_UTEST && BSP_USING_CAN0
+    help
+        Adds the bsp.d213.can0.loopback case.  The D21x SELFTEST mode did
+        not receive or complete a frame without external CAN0 TX/RX wiring
+        on the demo128 board.  Enable this only when TX and RX are wired
+        together, or when a transceiver, termination and an ACK-ing peer
+        are connected.
+
+endmenu

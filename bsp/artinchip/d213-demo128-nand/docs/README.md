@@ -31,6 +31,7 @@
 | [19-maintenance-upstream.md](19-maintenance-upstream.md) | 版本、许可证、HAL 升级、上游贡献注意事项 |
 | [20-vendor-source-license.md](20-vendor-source-license.md) | 原厂源码来源、文件清单、SHA-256 与许可证 |
 | [21-upstream-readiness.md](21-upstream-readiness.md) | 上游化代码归属、依赖、PR 拆分、许可证与遗留问题 |
+| [22-utest-regression.md](22-utest-regression.md) | utest 测试固件、P0/P1/P2 分级、串口脚本和结果判定 |
 
 ## 验证状态标记
 
@@ -47,10 +48,12 @@
 
 当前总体状态：
 
-- 内核启动、PLIC、CLINT、UART0、调度、IPC、FPU、FinSH：**HW**（目录重组前实机验证；重组后回归待做）。
-- GPIO、UART1/2/4、I2C、CAN、PWM、WDT、RTC：**BUILD + STATIC**，实机验证待做。
-- LVDS/DE Framebuffer、硬件 Color Bar、VSync、GE Normal：**HW**；LVGL 9.6.0 + `lvgl-aic-standalone`：**BUILD + PACKAGE**，新组件实机待验证。
+- 内核启动、PLIC、CLINT、UART0、调度、IPC、FinSH：**HW**（MSH 输入、tick、显示/触摸等已实机验证）；纯 BSP 的 FPU 上下文为 **KNOWN-FAIL**。
+- GPIO、UART1/2/4、PWM：**BUILD + STATIC**，实机验证待做；I2C3、WDT、RTC 已实机验证。
+- LVDS/DE Framebuffer、硬件 Color Bar、VSync、GE Normal：**HW**；LVGL 9.6.0 + `lvgl-aic-standalone`：**HW**（软件渲染路径）。
 - GT911 触摸：**HW（多点读取）**，方向校准待做。
+- CAN 控制器初始化和内部 loopback：**BUILD + STATIC**；外部总线需要第二节点/分析仪，当前为 **SKIP**。
+- D213 utest 测试固件：**BUILD + STATIC**，实机 P0/P1 回归待做。
 - 存储、MIPI/RGB、USB、SDIO、网络、音频、视频：**N/I**，详见对应文档。
 
 ## 最重要的事实

@@ -16,30 +16,32 @@ D213EC-DEMO-V4-0 board, using the `demo128-nand` software configuration.
 
 | Area | State |
 |---|---|
-| M-mode startup, PLIC, CLINT, scheduler, IPC, FPU, FinSH | BUILD + STATIC with Next RISC-V common port; HW re-test pending |
-| UART0 console | HW before directory reorg; re-test pending |
+| M-mode startup, PLIC, CLINT, scheduler, IPC, FinSH | HW: MSH input, tick, scheduler and IPC verified; FPU context known-fail on the pure BSP |
+| UART0 console | HW: 1 ms polled RX, MSH input and command output OK |
 | UART1/2/4 multi-instance | BUILD + STATIC, hardware pending |
 | GPIO / pin IRQ | BUILD + STATIC, hardware pending |
-| I2C0-3 master | BUILD + STATIC, hardware pending |
-| CAN0/1 classic CAN 2.0A/B | BUILD + STATIC, bus test pending |
+| I2C0-3 master | I2C3 HW PASS through GT911; I2C0/1/2 pending |
+| CAN0/1 classic CAN 2.0A/B | Controller init/baud/mode PASS; loopback requires external TX/RX wiring; external bus SKIP (no second node) |
 | PWM (4 channels) | BUILD + STATIC, hardware pending |
-| WDT, RTC | BUILD + STATIC, hardware pending |
-| GT911 capacitive touch (I2C3, PA.8/PA.9) | HW: multi-touch DOWN/MOVE/UP read OK; orientation calibration pending |
-| LVDS + DE framebuffer, color bar, VSync | HW: color bar, fb0/fb1 pan, VSync 10/10, underflow 0 |
+| WDT, RTC | HW PASS |
+| GT911 capacitive touch (I2C3, PA.8/PA.9) | HW: five-point DOWN/MOVE/UP coordinates OK; orientation calibration pending |
+| LVDS + DE framebuffer, color bar, VSync | HW: 1024x600, fb0/fb1 pan, VSync 10/10, underflow 0 |
 | GE Normal fill/blit | HW: FillRect and BitBlt PASS |
 | GE Normal scale/blend/rotate | BUILD + STATIC, re-test pending |
 | LVGL 9.6.0 display + GT911 pointer input | HW: software render, click, drag and touch coordinates verified |
+| D213 utest firmware | BUILD + STATIC, P0/P1 hardware regression pending |
 | SPI NAND/MTD/FS, MIPI/RGB, USB, SDIO, Ethernet, audio, video | Not implemented |
 
 **CAN FD is not implemented and is not supported by the D21x controller.**
 Do not enable the vendor `canfd` driver for D21x.
 
-Build verification with GCC 16.1.0 (Newlib 4.6.0), Python 3.13.15 and SCons 4.8.1:
+Build verification with Xuantie GCC 14.3.0 (V3.3.0), Python 3.13 and SCons 4.8.1:
 
 | Configuration | text | data | bss |
 |---|---:|---:|---:|
-| `configs/d213-minimal.config` | 63760 | 1056 | 14536 |
-| `configs/d213-default.config` (peripherals + display + GE + GT911) | 113752 | 4360 | 15720 |
+| `configs/d213-minimal.config` | 64632 | 2616 | 14232 |
+| `configs/d213-default.config` (peripherals + display + GE + GT911) | 114360 | 5936 | 15416 |
+| `configs/d213-utest.config` (default + utest) | 155968 | 6344 | 18360 |
 | default + lvgl-aic-standalone software path | not rebuilt in this migration | - | - |
 
 Xuantie GCC 10.2.0 (V2.6.1) also builds the same source; object sizes differ
@@ -51,8 +53,9 @@ Packaging with the current SDK assets:
 
 | Configuration | `rtthread.bin` | `d21x_os.itb` | final `.img` |
 |---|---:|---:|---:|
-| minimal | 65056 | 67584 | 916992 |
-| default (with GT911) | 118280 | 120832 | 970240 |
+| minimal | 67384 | 69632 | 919040 |
+| default (with GT911) | 120368 | 122880 | 972288 |
+| utest | 162504 | 165888 | 1015296 |
 
 Size alone is not hardware validation.
 
@@ -114,6 +117,53 @@ and the `lvgl_demo` / `lvgl_touch` MSH verification commands. Software frame
 copy is the default; GE frame copy remains optional.
 
 `rtconfig.h` is generated from `.config`; do not edit it by hand.
+
+## Regression tests
+
+The default and minimal images never link the test cases.  A separate
+`configs/d213-utest.config` enables the standard RT-Thread utest framework,
+the official uassert/kernel cases and the D213 cases under `utest/`.
+
+Build and statically check the test firmware with the shared matrix script:
+
+```sh
+python bsp/artinchip/tools/build-check.py \
+    --targets d213-utest \
+    --sdk "$AIC_SDK_DIR"
+```
+
+The check verifies that the utest runtime symbols and the expected testcase
+names are present in the ELF.  BUILD/STATIC/PACKAGE PASS is not a hardware
+test.
+
+Run the suites from the UART0 console:
+
+```text
+msh > utest_list
+msh > utest_run -thread components.utilities.utest.uassert
+msh > utest_run -thread core.irq
+msh > utest_run -thread core.semaphore
+msh > utest_run -thread core.mutex
+msh > utest_run -thread core.mutex_pi
+msh > utest_run -thread bsp.d213.*
+```
+
+Or use the host-side serial runner (requires `pip install pyserial`):
+
+```sh
+python bsp/artinchip/tools/d213_utest.py --port COM7 \
+    --log artifacts/d213-utest-serial.log
+```
+
+`bsp.d213.fpu.context` is a known failure on the pure BSP because the
+upstream common port does not preserve `fs0..fs11` across a thread switch.
+The host script reports it as `KNOWN-FAIL`; do not hide it or patch
+`libcpu/risc-v/common/` just to make the result green.  The integration
+branch `integration/artinchip-fpu-test` is the place for the common-port
+FPU fix.
+
+See `docs/22-utest-regression.md` for the P0/P1/P2 case list, hardware
+conditions, host script exit codes and the evidence-level rules.
 
 ## Firmware packaging
 
@@ -183,11 +233,13 @@ the vendor `os` partition (about 4 MB in the demo128 layout).
 ## Directory layout
 
 ```text
-applications/   bring-up self-test, FPU test, peripheral MSH commands
+applications/   boot entry, aic_selftest, FPU test, peripheral MSH commands
 board/          common-port glue, clock, pinmux, PLIC quirk, timer, linker script
 drivers/        RT-Thread adapters: UART/GPIO/I2C/CAN/PWM/WDT/RTC/DE/GE
+utest/          D213 utest cases and integer context assembly
 vendor/         curated ArtInChip HAL + minimal compatibility layer
 lvgl/           optional LVGL 9.6.0 port, GT911 input and MSH demo
+configs/        d213-minimal, d213-default and d213-utest profiles
 docs/           complete Chinese documentation set
 pack/           image/partition configuration
 tools/          mk_firmware.py
@@ -213,10 +265,14 @@ packaging time.
 - LVDS/DE framebuffer, color bar, double buffering, VSync and GE
   FillRect/BitBlt are hardware verified; GE scale/blend/rotate still need
   re-test.
-- GPIO/I2C/CAN/PWM/WDT/RTC have not been validated on hardware.
+- I2C3, WDT and RTC are hardware verified. GPIO, UART1/2/4 and PWM still
+  need hardware validation.
 - CAN requires an external transceiver, bus termination and a peer node.
-- No SPI NAND/MTD/filesystem, MIPI/RGB display, touch, LVGL hardware run,
-  USB, SDIO, Ethernet, Wi-Fi, audio or video support yet.
-- No DMA or cache-maintenance integration.
-- The common port was extended in `libcpu/risc-v/common` to save/restore
-  `f0`-`f31` and `fcsr` across direct thread context switches.
+  The D21x SELFTEST loopback also needs CAN0 TX/RX wired together; without
+  that wiring the loopback utest remains disabled.
+- No SPI NAND/MTD/filesystem, MIPI/RGB, USB, SDIO, Ethernet, Wi-Fi, audio or
+  video support yet.
+- No general DMA framework or cache-coherent allocator.
+- `libcpu/risc-v/common` is unmodified on this branch.  The pure BSP
+  therefore reports the known `fs1` FPU context failure; the common-port
+  fix lives on `integration/artinchip-fpu-test`.
