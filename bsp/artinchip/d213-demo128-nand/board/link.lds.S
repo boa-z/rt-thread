@@ -3,11 +3,12 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * ArtInChip D213 memory layout.
+ * ArtInChip D213 memory layout for the RT-Thread RISC-V common port.
  *
- * The vendor bootloader loads segment 0 of the FIT image at 0x40000000
- * and enters at the same address.  The image is linked as one contiguous
- * DRAM image; BSS is cleared by start_gcc.S.
+ * The vendor bootloader loads the FIT image at 0x40000000 and jumps to
+ * its entry point.  The common startup clears BSS, creates its own
+ * early per-CPU stack in .percpu, and the common IRQ stack lives in
+ * .bss.
  */
 
 #include <rtconfig.h>
@@ -16,16 +17,16 @@
 #define AIC_DRAM_TOTAL_SIZE 0x8000000
 #endif
 
-#ifndef AIC_INTERRUPT_STACK_SIZE
-#define AIC_INTERRUPT_STACK_SIZE 0x2000
-#endif
-
 #ifndef AIC_BOOTLOADER_RESERVED_SIZE
 #define AIC_BOOTLOADER_RESERVED_SIZE 0x800000
 #endif
 
 #ifndef AIC_FB_RESERVED_SIZE
 #define AIC_FB_RESERVED_SIZE 0
+#endif
+
+#ifndef RT_CPUS_NR
+#define RT_CPUS_NR 1
 #endif
 
 OUTPUT_ARCH("riscv")
@@ -41,14 +42,17 @@ SECTIONS
     . = ORIGIN(DRAM);
 
     .text : {
-        /* The BSP entry must be the first word of the image.  The upstream
-         * CPU port also places SW_handler in .text.entry, so keep a
-         * dedicated section for _start ahead of it. */
+        PROVIDE(__text_start = .);
+        KEEP(*(.start))
         KEEP(*(.text.start))
         KEEP(*(.text.entry))
         *(.text)
         *(.text.*)
         *(.gnu.linkonce.t*)
+        . = ALIGN(8);
+        __rt_utest_tc_tab_start = .;
+        KEEP(*(UtestTcTab))
+        __rt_utest_tc_tab_end = .;
         . = ALIGN(8);
         __fsymtab_start = .;
         KEEP(*(FSymTab))
@@ -58,9 +62,21 @@ SECTIONS
         KEEP(*(VSymTab))
         __vsymtab_end = .;
         . = ALIGN(8);
+        __rtmsymtab_start = .;
+        KEEP(*(RTMSymTab))
+        __rtmsymtab_end = .;
+        . = ALIGN(8);
         __rt_init_start = .;
         KEEP(*(SORT(.rti_fn*)))
         __rt_init_end = .;
+        . = ALIGN(8);
+        __rt_ofw_data_start = .;
+        KEEP(*(SORT(.rt_ofw_data.*)))
+        __rt_ofw_data_end = .;
+        . = ALIGN(8);
+        __usbh_class_info_start__ = .;
+        KEEP(*(.usbh_class_info))
+        __usbh_class_info_end__ = .;
         . = ALIGN(8);
         __etext = .;
     } > DRAM
@@ -74,6 +90,15 @@ SECTIONS
         *(.srodata.*)
         *(.rdata)
         *(.rdata.*)
+        . = ALIGN(8);
+        __ctors_start__ = .;
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.init_array))
+        __ctors_end__ = .;
+        __dtors_start__ = .;
+        KEEP(*(SORT(.fini_array.*)))
+        KEEP(*(.fini_array))
+        __dtors_end__ = .;
         . = ALIGN(8);
         __rodata_end__ = .;
     } > DRAM
@@ -93,21 +118,31 @@ SECTIONS
 
     .bss (NOLOAD) : {
         . = ALIGN(8);
-        __bss_start__ = .;
+        __bss_noclean_start = .;
+        *(.bss.noclean.*)
+        __bss_noclean_end = .;
+        . = ALIGN(8);
+        __bss_start = .;
         *(.bss)
         *(.bss.*)
         *(.sbss)
         *(.sbss.*)
         *(COMMON)
         . = ALIGN(8);
-        __bss_end__ = .;
-        end = .;
+        __bss_end = .;
     } > DRAM
 
-    . = ALIGN(16);
-    __irq_stack_bottom = .;
-    . += AIC_INTERRUPT_STACK_SIZE;
-    __rt_rvstack = .;
+    .percpu (NOLOAD) : {
+        __percpu_start = .;
+        *(.percpu)
+        __percpu_end = .;
+        . = __percpu_end + (__percpu_end - __percpu_start) * (RT_CPUS_NR - 1);
+        __percpu_real_end = .;
+    } > DRAM
+
+    _end = .;
+    __bss_start__ = __bss_start;
+    __bss_end__ = __bss_end;
 
     . = ALIGN(16);
     __heap_start = .;
@@ -132,7 +167,7 @@ SECTIONS
 
 ASSERT(__data_end__ <= __bss_start__, "data overlaps bss")
 ASSERT(__bss_end__ <= __heap_start, "bss overlaps heap")
-ASSERT(__irq_stack_bottom < __rt_rvstack, "interrupt stack is empty")
+ASSERT(__percpu_start <= __percpu_end, "percpu section is invalid")
 ASSERT(__heap_start < __heap_end, "heap is empty")
 ASSERT(__heap_end <= __fb_start, "heap overlaps the framebuffer reserve")
 ASSERT(__fb_start <= __fb_end, "framebuffer reserve is invalid")

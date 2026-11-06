@@ -9,6 +9,8 @@
 #include <rthw.h>
 #include <rtthread.h>
 #include <rtdevice.h>
+#include <isa_ext.h>
+#include <riscv_timer.h>
 #include <stdint.h>
 
 #include "board.h"
@@ -41,6 +43,13 @@ static void aic_cpu_init(void)
 
 void rt_hw_board_init(void)
 {
+    riscv_isa_ext_set(I);
+    riscv_isa_ext_set(M);
+    riscv_isa_ext_set(A);
+    riscv_isa_ext_set(F);
+    riscv_isa_ext_set(D);
+    riscv_isa_ext_set(C);
+
     aic_cpu_init();
 
     /* Peripheral gates and UART0 pinmux.  The CPU/PLL tree is set up by
@@ -53,8 +62,12 @@ void rt_hw_board_init(void)
 #endif
 
     rt_hw_interrupt_init();
-    rt_hw_serial_init();
+    aic_plic_quirk_init();
+
+    riscv_timer_set_frequency(BSP_CLINT_FREQ);
     rt_hw_tick_init();
+
+    rt_hw_serial_init();
 
 #ifdef RT_USING_COMPONENTS_INIT
     rt_components_board_init();

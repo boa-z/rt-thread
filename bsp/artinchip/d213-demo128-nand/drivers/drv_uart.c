@@ -303,6 +303,9 @@ static void aic_uart_register(struct aic_uart *uart, const char *name)
     uart->serial.ops = &aic_uart_ops;
     uart->serial.config = config;
 
+    /* Translate the SoC PLIC hardware IRQ to the RT-Thread handler index. */
+    uart->irq = IRQ_PLIC(uart->irq);
+
     rt_hw_serial_register(&uart->serial, name,
                           RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_INT_RX,
                           uart);

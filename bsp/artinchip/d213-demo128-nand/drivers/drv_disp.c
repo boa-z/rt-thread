@@ -18,7 +18,7 @@
 #include <string.h>
 
 #include "board.h"
-#include "cache.h"
+#include "aic_cache.h"
 #include "drv_disp.h"
 #include "aic_hal.h"
 #include "aic_hal_de.h"
@@ -215,8 +215,8 @@ static int disp_de_configure(struct aic_disp *disp)
     de_timing_enable_interrupt(de, 1, TIMING_INIT_V_BLANK_FLAG);
     de_timing_enable_interrupt(de, 1, TIMING_INIT_UNDERFLOW_FLAG);
 
-    rt_hw_interrupt_install(DE_IRQn, disp_de_isr, disp, "de");
-    rt_hw_interrupt_umask(DE_IRQn);
+    rt_hw_interrupt_install(IRQ_PLIC(DE_IRQn), disp_de_isr, disp, "de");
+    rt_hw_interrupt_umask(IRQ_PLIC(DE_IRQn));
 
     disp->info.framebuffer = disp->fb[disp->active];
 
@@ -419,7 +419,7 @@ static int disp_power(struct aic_disp *disp, int on)
     {
         disp_panel_gpio(0);
         de_timing_enable(de, 0);
-        rt_hw_interrupt_mask(DE_IRQn);
+        rt_hw_interrupt_mask(IRQ_PLIC(DE_IRQn));
         disp_lvds_disable();
 
         /*

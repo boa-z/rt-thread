@@ -4,7 +4,8 @@ import subprocess
 
 # Toolchain options
 ARCH        = 'risc-v'
-CPU         = 'rv64'
+CPU         = 'c906'
+VENDOR      = 't-head'
 CROSS_TOOL  = 'gcc'
 
 RTT_ROOT = os.getenv('RTT_ROOT') or os.path.normpath(os.path.join(os.getcwd(), '..', '..', '..'))

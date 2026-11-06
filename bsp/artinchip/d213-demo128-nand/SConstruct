@@ -55,6 +55,12 @@ link_lds = env.Command('link.lds',
     ['board/link.lds.S', 'rtconfig.h', '.config'],
     env.Action(aic_link_lds_action, 'GEN link.lds'))
 
+# The RISC-V common SConscript decides at parse time whether the BSP
+# provides link.lds.  Generate it before PrepareBuilding() so a clean build
+# always uses the ArtInChip memory layout instead of libcpu/riscv/link.lds.
+if os.path.exists('rtconfig.h'):
+    aic_link_lds_action(['link.lds'], [], env)
+
 def aic_link_action(target, source, env):
     """
     Link through a GCC response file.

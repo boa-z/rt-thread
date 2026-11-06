@@ -344,7 +344,13 @@ static inline int aicos_request_irq(int irq, aicos_irq_handler_t handler,
 #define RTC_IRQn            50
 #define GPIO_IRQn           68
 #define DE_IRQn             59
+#ifdef __riscv
+extern int irq_plic_base;
+#define AIC_IRQ_PLIC(hwirq) (irq_plic_base + (hwirq))
+#define GE_IRQn             AIC_IRQ_PLIC(60)
+#else
 #define GE_IRQn             60
+#endif
 
 /* ------------------------------------------------------------------ */
 /* D21x build-time peripheral configuration                            */
