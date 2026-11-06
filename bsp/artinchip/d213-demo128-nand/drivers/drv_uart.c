@@ -280,6 +280,18 @@ static void aic_uart_isr(int vector, void *param)
         {
         case UART_IIR_RX_DATA:
         case UART_IIR_RX_TIMEOUT:
+            /*
+             * A stale PLIC/bootloader interrupt can arrive before FinSH
+             * opens the device.  Drain the byte instead of entering the
+             * serial framework with serial->serial_rx still NULL.
+             */
+            if (uart->serial.serial_rx == RT_NULL)
+            {
+                while (aic_uart_getc(&uart->serial) >= 0)
+                {
+                }
+                break;
+            }
             rt_hw_serial_isr(&uart->serial, RT_SERIAL_EVENT_RX_IND);
             break;
 
@@ -298,7 +310,6 @@ static void aic_uart_isr(int vector, void *param)
 static void aic_uart_register(struct aic_uart *uart, const char *name)
 {
     struct serial_configure config = RT_SERIAL_CONFIG_DEFAULT;
-    uint32_t ier;
 
     uart->serial.ops = &aic_uart_ops;
     uart->serial.config = config;
@@ -310,13 +321,13 @@ static void aic_uart_register(struct aic_uart *uart, const char *name)
                           RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_INT_RX,
                           uart);
 
+    /*
+     * Only install the handler here.  Enabling RX before rt_serial_open()
+     * has allocated serial->serial_rx makes rt_hw_serial_isr() assert.
+     * rt_serial_open() calls RT_DEVICE_CTRL_SET_INT, which unmasks the
+     * PLIC line and enables UART_IER_RDA at the right time.
+     */
     rt_hw_interrupt_install(uart->irq, aic_uart_isr, uart, name);
-    rt_hw_interrupt_umask(uart->irq);
-
-    /* The PLIC is unmasked above; enable the controller RX interrupt. */
-    ier = uart_read(uart, UART_IER);
-    ier |= UART_IER_RDA;
-    uart_write(uart, UART_IER, ier);
 }
 
 void rt_hw_serial_init(void)
