@@ -25,6 +25,7 @@
 
 #define CLK_GPIO_REG  0x083C
 #define CLK_UART0_REG 0x0840
+#define CLK_QSPI0_REG 0x0460
 #define CLK_GTC_REG   0x090C
 
 #define CLK_UART_REG(n) (CLK_UART0_REG + (n) * 4)
@@ -81,4 +82,9 @@ void aic_board_sysclk_init(void)
     /* GPIO and GTC: bus gate only. */
     aic_clk_enable(CLK_GPIO_REG, -1);
     aic_clk_enable(CLK_GTC_REG, -1);
+
+#if defined(BSP_USING_QSPI0)
+    /* QSPI0: bus gate bit 12, module gate bit 8, reset bit 13. Parent PLL_FRA0. */
+    aic_clk_enable(CLK_QSPI0_REG, 8);
+#endif
 }

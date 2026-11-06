@@ -293,6 +293,10 @@
 #define AIC_FB_RESERVED_SIZE 0x2000000
 /* end of Display */
 #define BSP_USING_GE
+
+/* QSPI / SPI NAND */
+
+/* end of QSPI / SPI NAND */
 /* end of On-chip Peripheral Drivers */
 #define BOARD_ARTINCHIP_D213_DEMO128
 

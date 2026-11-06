@@ -357,4 +357,68 @@ config BSP_USING_GE
         Enables the vendor GE Normal-mode HAL.  The GE CMD queue is not
         used on D21x.
 
+menu "QSPI / SPI NAND"
+
+config BSP_USING_QSPI0
+    bool "Enable QSPI0 (SPI NAND bus)"
+    default n
+    help
+        Enable D21x QSPI0 controller as RT-Thread QSPI bus "qspi0"
+        for SPI NAND. Pins PB.0..PB.5 are QSPI0 (PB.2 = CS).
+        This bus is mutually exclusive with SDMC0 on PB.0..PB.11
+        (function 2).  This port implements the single-line
+        synchronous CPU FIFO path only; DMA, interrupts and the
+        multi-line command/data phases are future work.
+
+    select RT_USING_SPI
+    select RT_USING_QSPI
+
+config BSP_QSPI0_FREQ
+    int "QSPI0 default bus frequency (Hz)"
+    default 24000000
+    range 100000 200000000
+    depends on BSP_USING_QSPI0
+    help
+        Requested SPI clock.  The driver selects the closest divider
+        from the QSPI0 input clock and prints the actual rate at boot.
+
+config BSP_QSPI0_INPUT_HZ
+    int "QSPI0 input clock from the bootloader (Hz)"
+    default 100000000
+    range 1000000 300000000
+    depends on BSP_USING_QSPI0
+    help
+        The ArtInChip bootloader programs the QSPI0 parent and CMU
+        divider.  This BSP does not reconfigure the SoC clock tree;
+        this value is the assumed input clock used for divider
+        selection.  Measure QSPI0_CLK if the board bootloader uses a
+        different rate and override this value.
+
+config BSP_USING_SPINAND_MTD_NAND
+    bool "Enable SPI NAND MTD (read-only stage)"
+    default n
+    depends on BSP_USING_QSPI0
+    select RT_USING_MTD_NAND
+    select RT_USING_DEVICE_OPS
+    help
+        Register read-only SPI NAND MTD partitions via
+        rt_mtd_nand_register_device.  Only read_id / read_page /
+        check_block are implemented; write_page / move_page /
+        erase_block / mark_badblock return -RT_EPERM without
+        touching the flash.
+        The controller uses the RT-Thread QSPI bus "qspi0" and
+        attaches device "spinand0".  Partitions are generated from
+        pack/image_cfg.json at build time.
+
+config BSP_SPINAND_READONLY
+    bool "Register SPI NAND as read-only MTD"
+    default y
+    depends on BSP_USING_SPINAND_MTD_NAND
+    help
+        Guard for the read-only stage.  All mutating operations are
+        rejected even though the upstream MTD register defaults to
+        RT_DEVICE_FLAG_RDWR.
+
+endmenu
+
 endmenu

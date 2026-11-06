@@ -1,5 +1,9 @@
 from building import *
 
+import os
+import subprocess
+import sys
+
 cwd = GetCurrentDir()
 src = []
 CPPPATH = [cwd, cwd + '/../board', cwd + '/../vendor/include']
@@ -37,6 +41,19 @@ if GetDepend('BSP_USING_DISPLAY'):
 
 if GetDepend('BSP_USING_GE'):
     src += ['drv_ge.c']
+
+if GetDepend('BSP_USING_QSPI0'):
+    src += ['drv_qspi.c']
+
+if GetDepend('BSP_USING_SPINAND_MTD_NAND'):
+    # The partition table is generated from pack/image_cfg.json so the
+    # driver never keeps a second copy of the NAND layout.
+    gen = os.path.normpath(os.path.join(cwd, '..', 'tools', 'gen_nand_parts.py'))
+    gen_dir = os.path.normpath(os.path.join(cwd, '..', 'build'))
+    gen_out = os.path.join(gen_dir, 'spinand_parts_gen.h')
+    subprocess.check_call([sys.executable, gen, '--output', gen_out])
+    CPPPATH += [gen_dir]
+    src += ['drv_spinand.c']
 
 group = DefineGroup('Drivers', src, depend=[''], CPPPATH=CPPPATH)
 

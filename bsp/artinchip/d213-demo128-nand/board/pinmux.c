@@ -64,6 +64,22 @@ void aic_board_pinmux_init(void)
     aic_pin_cfg(1, 7, PIN_FUNC(5) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_DIS));
 #endif
 
+#if defined(BSP_USING_QSPI0)
+    /*
+     * QSPI0: PB.0..PB.5, function 3, pull-up, drive 3.
+     * PB.2 is CS.  PB.0..PB.5 are NOT shared with UART4 (PB.6/PB.7),
+     * but PB.0..PB.11 are shared with SDMC0 (function 2); do not enable
+     * SDMC0 together with QSPI0 on demo128.
+     * Source: Luban-Lite target/d21x/demo128-nand/pinmux.c (Apache-2.0).
+     */
+    aic_pin_cfg(1, 0, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+    aic_pin_cfg(1, 1, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+    aic_pin_cfg(1, 2, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+    aic_pin_cfg(1, 3, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+    aic_pin_cfg(1, 4, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+    aic_pin_cfg(1, 5, PIN_FUNC(3) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_UP));
+#endif
+
 #if defined(BSP_USING_I2C3)
     /* I2C3 SCK/SDA: PA.10 / PA.11, function 4 (touch controller). */
     aic_pin_cfg(0, 10, PIN_FUNC(4) | PIN_DRIVE(3) | PIN_PULL(PIN_PULL_DIS));

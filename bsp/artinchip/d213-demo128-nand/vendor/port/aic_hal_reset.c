@@ -25,6 +25,18 @@ static int aic_reset_lookup(u32 id, struct aic_reset_desc *desc)
 {
     switch (id)
     {
+    case RESET_QSPI0:
+        desc->offset = CLK_QSPI0_REG;
+        return 0;
+    case RESET_QSPI1:
+        desc->offset = CLK_QSPI1_REG;
+        return 0;
+    case RESET_QSPI2:
+        desc->offset = CLK_QSPI2_REG;
+        return 0;
+    case RESET_QSPI3:
+        desc->offset = CLK_QSPI3_REG;
+        return 0;
     case RESET_RGB:
         desc->offset = CLK_RGB_REG;
         return 0;

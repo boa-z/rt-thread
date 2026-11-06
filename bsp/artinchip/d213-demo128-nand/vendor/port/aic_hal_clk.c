@@ -41,6 +41,15 @@ static int aic_clk_lookup(u32 id, struct aic_clk_desc *desc)
         return 0;
     }
 
+    if (id >= CLK_QSPI0 && id <= CLK_QSPI3)
+    {
+        desc->offset = CLK_QSPI0_REG + (id - CLK_QSPI0) * 4;
+        desc->bus_gate_bit = 12;
+        desc->mod_gate_bit = 8;
+        desc->freq = 100000000UL;
+        return 0;
+    }
+
     if (id >= CLK_I2C0 && id <= CLK_I2C3)
     {
         desc->offset = CLK_I2C0_REG + (id - CLK_I2C0) * 4;
