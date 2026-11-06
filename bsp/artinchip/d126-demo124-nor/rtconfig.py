@@ -5,7 +5,7 @@ import subprocess
 # Toolchain options
 ARCH        = 'risc-v'
 CPU         = 'e9xx'
-VENDOR      = 'artinchip'
+VENDOR      = ''
 CROSS_TOOL  = 'gcc'
 
 RTT_ROOT = os.getenv('RTT_ROOT') or os.path.normpath(

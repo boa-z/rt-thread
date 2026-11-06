@@ -97,13 +97,24 @@
 #define RT_USING_CONSOLE
 #define RT_CONSOLEBUF_SIZE 128
 #define RT_CONSOLE_DEVICE_NAME "uart0"
-#define RT_VER_NUM 0x50300
+#define RT_VER_NUM 0x50400
 #define RT_BACKTRACE_LEVEL_MAX_NR 32
 /* end of RT-Thread Kernel */
+#define ARCH_TEXT_OFFSET 0x400000
+#define ARCH_RAM_OFFSET 0
+#define RT_USING_CPU_FFS
 #define ARCH_RISCV
 #define ARCH_RISCV_FPU
 #define ARCH_RISCV_FPU_S
 #define ARCH_RISCV32
+
+/* RISC-V Architecture Configuration */
+
+#define RT_USING_RISCV_NEW_COMMON
+#define ARCH_RISCV_M_MODE
+#define ARCH_RISCV_USING_IRQ_STACK
+#define ARCH_RISCV_IRQ_STACK_SIZE 1024
+/* end of RISC-V Architecture Configuration */
 
 /* RT-Thread Components */
 
@@ -170,6 +181,11 @@
 
 /* Utilities */
 
+#define RT_USING_ADT
+#define RT_USING_ADT_AVL
+#define RT_USING_ADT_BITMAP
+#define RT_USING_ADT_HASHMAP
+#define RT_USING_ADT_REF
 /* end of Utilities */
 
 /* Using USB legacy version */

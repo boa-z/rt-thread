@@ -3,12 +3,12 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * ArtInChip D126 (D12p) memory layout.
+ * ArtInChip D126 (D12p) memory layout for the RT-Thread RISC-V common
+ * port.
  *
  * The vendor bootloader loads the FIT image into PSRAM at 0x40000000.
- * The whole RT-Thread image, its boot stack and the system heap live in
- * PSRAM.  No DSP/CMA carve-out is made yet; display support will add a
- * reserved region when the panel is confirmed.
+ * The common startup creates its early per-CPU stack in .percpu and the
+ * common IRQ stack lives in .bss.  The remaining PSRAM is the heap.
  */
 
 #include <rtconfig.h>
@@ -17,8 +17,8 @@
 #define AIC_PSRAM_SIZE 0x00800000
 #endif
 
-#ifndef AIC_BOOT_STACK_SIZE
-#define AIC_BOOT_STACK_SIZE 0x2000
+#ifndef RT_CPUS_NR
+#define RT_CPUS_NR 1
 #endif
 
 OUTPUT_ARCH("riscv")
@@ -34,12 +34,17 @@ SECTIONS
     . = ORIGIN(PSRAM);
 
     .text : {
+        PROVIDE(__text_start = .);
+        KEEP(*(.start))
         KEEP(*(.text.start))
         KEEP(*(.text.entry))
-        KEEP(*(.text.trap))
         *(.text)
         *(.text.*)
         *(.gnu.linkonce.t*)
+        . = ALIGN(8);
+        __rt_utest_tc_tab_start = .;
+        KEEP(*(UtestTcTab))
+        __rt_utest_tc_tab_end = .;
         . = ALIGN(8);
         __fsymtab_start = .;
         KEEP(*(FSymTab))
@@ -49,9 +54,21 @@ SECTIONS
         KEEP(*(VSymTab))
         __vsymtab_end = .;
         . = ALIGN(8);
+        __rtmsymtab_start = .;
+        KEEP(*(RTMSymTab))
+        __rtmsymtab_end = .;
+        . = ALIGN(8);
         __rt_init_start = .;
         KEEP(*(SORT(.rti_fn*)))
         __rt_init_end = .;
+        . = ALIGN(8);
+        __rt_ofw_data_start = .;
+        KEEP(*(SORT(.rt_ofw_data.*)))
+        __rt_ofw_data_end = .;
+        . = ALIGN(8);
+        __usbh_class_info_start__ = .;
+        KEEP(*(.usbh_class_info))
+        __usbh_class_info_end__ = .;
         . = ALIGN(8);
         __etext = .;
     } > PSRAM
@@ -59,13 +76,21 @@ SECTIONS
     .rodata : {
         . = ALIGN(8);
         __srodata = .;
-        KEEP(*(.vectors))
         *(.rodata)
         *(.rodata.*)
         *(.srodata)
         *(.srodata.*)
         *(.rdata)
         *(.rdata.*)
+        . = ALIGN(8);
+        __ctors_start__ = .;
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.init_array))
+        __ctors_end__ = .;
+        __dtors_start__ = .;
+        KEEP(*(SORT(.fini_array.*)))
+        KEEP(*(.fini_array))
+        __dtors_end__ = .;
         . = ALIGN(8);
         __rodata_end__ = .;
     } > PSRAM
@@ -85,21 +110,31 @@ SECTIONS
 
     .bss (NOLOAD) : {
         . = ALIGN(8);
-        __bss_start__ = .;
+        __bss_noclean_start = .;
+        *(.bss.noclean.*)
+        __bss_noclean_end = .;
+        . = ALIGN(8);
+        __bss_start = .;
         *(.bss)
         *(.bss.*)
         *(.sbss)
         *(.sbss.*)
         *(COMMON)
         . = ALIGN(8);
-        __bss_end__ = .;
-        end = .;
+        __bss_end = .;
     } > PSRAM
 
-    . = ALIGN(16);
-    __irq_stack_bottom = .;
-    . += AIC_BOOT_STACK_SIZE;
-    __rt_rvstack = .;
+    .percpu (NOLOAD) : {
+        __percpu_start = .;
+        *(.percpu)
+        __percpu_end = .;
+        . = __percpu_end + (__percpu_end - __percpu_start) * (RT_CPUS_NR - 1);
+        __percpu_real_end = .;
+    } > PSRAM
+
+    _end = .;
+    __bss_start__ = __bss_start;
+    __bss_end__ = __bss_end;
 
     . = ALIGN(16);
     __heap_start = .;
@@ -113,6 +148,7 @@ SECTIONS
 }
 
 ASSERT(__data_end__ <= __bss_start__, "data overlaps bss")
-ASSERT(__bss_end__ <= __heap_start, "bss overlaps heap")
-ASSERT(__irq_stack_bottom < __rt_rvstack, "boot stack is empty")
+ASSERT(__bss_end <= __heap_start, "bss overlaps heap")
+ASSERT(__percpu_start <= __percpu_end, "percpu section is invalid")
+ASSERT(_end <= __heap_start, "image end overlaps heap")
 ASSERT(__heap_start < __heap_end, "heap is empty")

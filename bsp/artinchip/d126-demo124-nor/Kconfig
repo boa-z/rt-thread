@@ -16,6 +16,10 @@ config BOARD_ARTINCHIP_D126_DEMO124_NOR
     bool
     select ARCH_RISCV32
     select ARCH_RISCV_FPU_S
+    select ARCH_RISCV_M_MODE
+    select RT_USING_RISCV_NEW_COMMON
+    select RT_USING_ADT
+    select RT_USING_ADT_BITMAP
     select RT_USING_COMPONENTS_INIT
     select RT_USING_USER_MAIN
     default y
