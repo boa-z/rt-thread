@@ -49,6 +49,7 @@ TARGET = "d213-utest"
 BOARD = "d213-demo128"
 PRODUCT = "d213_demo128_page_2k_block_128k"
 DEFAULT_UPGCMD = r"C:\Program Files\AiBurn\upgcmd.exe"
+DEFAULT_AICFLASH = r"C:\Program Files (x86)\artinchip-flash\artinchip-flash.exe"
 DEFAULT_PORT = os.getenv("D213_PORT", "COM9")
 MAX_FLASH_ATTEMPTS = 3
 
@@ -218,6 +219,20 @@ def now_iso():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def open_console(args, log_path, timeout=15):
+    console = Console(args.port, args.baud, log_path)
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            console.open()
+            return console
+        except Exception as exc:
+            last = exc
+            time.sleep(0.5)
+    raise RuntimeError(last)
+
+
 def write_report(report, report_dir):
     os.makedirs(report_dir, exist_ok=True)
     path = os.path.join(report_dir, "report.json")
@@ -293,27 +308,21 @@ def enter_upgrade(args, report, report_dir):
 
 
 def wait_boot(args, report, report_dir):
-    console = Console(args.port, args.baud,
-                      os.path.join(report_dir, "serial.log"))
     start = time.monotonic()
     try:
-        console.open()
+        console = open_console(args, os.path.join(report_dir, "serial.log"))
     except Exception as exc:
         stage(report, "boot", "SERIAL_BUSY", error=str(exc))
         return False, "serial busy: %s" % exc
 
-    deadline = start + args.boot_timeout
     try:
-        while time.monotonic() < deadline:
-            console.read_once()
-            if any(m in console.buffer for m in UPGRADE_MARKERS):
-                stage(report, "boot", "BOOT_FAIL", reason="entered upgrade mode")
-                return False, "board re-entered upgrade mode"
-            if PROMPT in console.buffer and any(
-                    m in console.buffer for m in BOOT_MARKERS):
-                seconds = time.monotonic() - start
-                stage(report, "boot", "PASS", seconds=round(seconds, 2))
-                return True, "msh prompt"
+        if console.wait_prompt(args.boot_timeout):
+            seconds = time.monotonic() - start
+            stage(report, "boot", "PASS", seconds=round(seconds, 2))
+            return True, "msh prompt"
+        if any(m in console.buffer for m in UPGRADE_MARKERS):
+            stage(report, "boot", "BOOT_FAIL", reason="entered upgrade mode")
+            return False, "board re-entered upgrade mode"
     except Exception as exc:
         stage(report, "boot", "SERIAL_ERROR", error=str(exc))
         return False, "serial error: %s" % exc
@@ -326,10 +335,8 @@ def wait_boot(args, report, report_dir):
 
 def verify_identity(args, report, report_dir):
     """Safe probe: the flashed image must expose the aicupg command."""
-    console = Console(args.port, args.baud,
-                      os.path.join(report_dir, "serial.log"))
     try:
-        console.open()
+        console = open_console(args, os.path.join(report_dir, "serial.log"))
     except Exception as exc:
         stage(report, "identity", "SERIAL_BUSY", error=str(exc))
         return False, "serial busy: %s" % exc
@@ -398,6 +405,11 @@ def main():
     parser.add_argument("--toolchain", default=os.getenv("RTT_EXEC_PATH"),
                         help="RISC-V toolchain bin directory")
     parser.add_argument("--upgcmd", default=DEFAULT_UPGCMD)
+    parser.add_argument("--flasher", choices=("artinchip-flash", "upgcmd"),
+                        default="artinchip-flash",
+                        help="flash backend (default: artinchip-flash)")
+    parser.add_argument("--flasher-path", default=None,
+                        help="path to artinchip-flash.exe")
     parser.add_argument("--image", default=None,
                         help="image path (default: newest artifacts image)")
     parser.add_argument("--skip-build", action="store_true")
@@ -476,6 +488,10 @@ def main():
             return finish("AUTHORIZATION_REQUIRED",
                           "--flash-scope full rewrites SPL/Bootloader/env; "
                           "pass --confirm-full-flash to allow it", 2)
+        if args.flasher == "artinchip-flash" and not args.confirm_full_flash:
+            return finish("AUTHORIZATION_REQUIRED",
+                          "the artinchip-flash CLI writes spl+env+os; pass "
+                          "--confirm-full-flash to allow it", 2)
     attempts = max(1, min(args.flash_attempts, MAX_FLASH_ATTEMPTS))
 
     # --- build + package --------------------------------------------------
@@ -551,13 +567,21 @@ def main():
 
     flash_log = os.path.join(report_dir, "flash.log")
     last_error = None
+    if args.flasher == "artinchip-flash":
+        flasher = args.flasher_path or DEFAULT_AICFLASH
+        if not os.path.isfile(flasher):
+            return finish("FLASH_FAIL", "flasher not found: %s" % flasher)
     for attempt in range(1, attempts + 1):
-        cmd = [args.upgcmd, "-p"]
-        if args.flash_transport == "uart":
-            cmd += ["-u", args.port]
-        cmd += ["image", image]
-        if args.flash_scope == "os":
-            cmd.append("image.target.os")
+        if args.flasher == "artinchip-flash":
+            # No --verbose: its console logging perturbs the reconnect timing.
+            cmd = [flasher, "burn", image]
+        else:
+            cmd = [args.upgcmd, "-p"]
+            if args.flash_transport == "uart":
+                cmd += ["-u", args.port]
+            cmd += ["image", image]
+            if args.flash_scope == "os":
+                cmd.append("image.target.os")
         rc, timeout = run_logged(cmd, flash_log, args.flash_timeout)
         if timeout:
             last_error = "flash timed out"
@@ -581,7 +605,10 @@ def main():
         return finish("FLASH_FAIL", last_error)
 
     stage(report, "flash", "PASS", attempts=attempt,
-          scope=args.flash_scope, log=flash_log)
+          flasher=args.flasher,
+          scope=("spl+env+os" if args.flasher == "artinchip-flash"
+                 else args.flash_scope),
+          log=flash_log)
 
     # --- boot -------------------------------------------------------------
     if args.flash_transport == "usb":

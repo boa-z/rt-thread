@@ -81,8 +81,10 @@ python3 tools/check_elf.py
 - Python 3.8+、`pyserial`；
 - Luban-Lite SDK 和 RISC-V 工具链（构建/打包）；
 - `pycryptodomex`（SDK 的 `mk_image.py` 需要）；
-- AiBurn v2.1.0 的 `upgcmd.exe`（默认
-  `C:\Program Files\AiBurn\upgcmd.exe`）。
+- AiBurn v2.1.0 的 `upgcmd.exe`
+  （`C:\Program Files\AiBurn\upgcmd.exe`），或 `artinchip-flash`
+  （`C:\Program Files (x86)\artinchip-flash\artinchip-flash.exe`，
+  默认烧录后端）。
 
 PowerShell 示例：
 
@@ -98,10 +100,20 @@ python bsp\artinchip\tools\d213_hil.py --mode enter-upgrade `
 python bsp\artinchip\tools\d213_hil.py --mode enter-upgrade `
   --upgrade-target bootloader --port COM9 --skip-build
 
-# 3. 完整闭环（首次自动烧录需要显式确认；默认只写 os 分区）
+# 3. 完整闭环（首次自动烧录需要显式确认）
+#    artinchip-flash 后端会写 spl+env+os，因此需要 --confirm-full-flash
 python bsp\artinchip\tools\d213_hil.py --mode full `
-  --confirm-board d213-demo128 --port COM9 `
+  --confirm-board d213-demo128 --confirm-full-flash `
+  --flasher artinchip-flash --port COM9 `
   --sdk C:\Project\D50T-2-Lite\luban-lite-jc
+```
+
+`upgcmd` 后端示例（只写 os 分区）：
+
+```powershell
+python bsp\artinchip\tools\d213_hil.py --mode full `
+  --confirm-board d213-demo128 --flasher upgcmd --flash-scope os `
+  --port COM9 --skip-build
 ```
 
 状态码：`PASS`、`DRY_RUN`、`UPGRADE_ENTRY_OK`、`BUILD_FAIL`、
@@ -114,19 +126,26 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
 
 - 默认 `--mode plan`，不改变板子状态；
 - `--mode full` 必须给出 `--confirm-board d213-demo128`；
-- 默认 `--flash-scope os`，只写 `image.target.os`，保留 SPL、Bootloader、
-  env 和 data 分区；`--flash-scope full` 需要 `--confirm-full-flash`；
+- 默认 `--flasher artinchip-flash`，其 CLI 固定写 `spl+env+os`，需要
+  `--confirm-full-flash`；`--flasher upgcmd --flash-scope os` 只写
+  `image.target.os`，保留 SPL、Bootloader、env 和 data 分区；
+- `artinchip-flash` 不要加 `--verbose`：日志 I/O 会拖慢 updater
+  重新枚举的时序，导致重连超时；
 - 烧录重试上限 3 次；utest 失败不会触发自动重刷；
 - 不执行 `flasherase`、eFuse 或安全配置操作。
 
 实机结果（2026-11-06，D213EC-DEMO-V4-0，COM9）：
 
+- `d213_hil.py --mode full --flasher artinchip-flash`：烧录 42.5 s，
+  所有组件 CRC OK，随后启动、`aicupg` 身份校验和 utest 全部通过；
 - `aicupg` → `upgcmd -l` 识别为 `Boot ROM (D21xB)`；
 - `aicupg gotobl` → `upgcmd -l` 识别为 `Bootloader`；
 - 恢复：串口 Ctrl-C + `nand_boot` 回到 RT-Thread，无需重新上电；
 - `d213_utest.py`：`uassert`、`core.irq`、`core.semaphore`、
   `core.mutex`、`core.mutex_pi` PASS；`bsp.d213.*` 仅有
   `bsp.d213.fpu.context` 已知失败（exit 2）。
+- 本机 `upgcmd image` 在 updater 重新枚举阶段会 `Access denied`，
+  因此 HIL 默认使用 `artinchip-flash` 后端。
 
 ## 支持矩阵
 
