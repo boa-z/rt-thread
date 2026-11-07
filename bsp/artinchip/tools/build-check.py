@@ -354,8 +354,17 @@ def write_sha256sums():
             if fn in ("SHA256SUMS", "manifest.md") or fn.endswith(".log"):
                 continue
             full = os.path.join(root, fn)
-            entries.append("%s  %s\n" % (
-                sha256(full), os.path.relpath(full, ARTIFACTS)))
+            rel = os.path.relpath(full, ARTIFACTS)
+            # HIL run directories hold logs/reports, not build artifacts;
+            # the HIL also keeps its build.log open while this runs.
+            if rel.startswith("d213-hil" + os.sep):
+                continue
+            try:
+                digest = sha256(full)
+            except OSError as exc:
+                print("[skip] %s: %s" % (rel, exc))
+                continue
+            entries.append("%s  %s\n" % (digest, rel))
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(entries)
 
