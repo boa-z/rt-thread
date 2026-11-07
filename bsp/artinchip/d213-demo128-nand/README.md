@@ -76,6 +76,21 @@ See `docs/README.md` for the full Chinese documentation set, including the
 hardware support matrix, boot flow, peripheral manuals, CAN limitations,
 build/packaging, testing, technical decisions and vendor license records.
 
+## Build identity and upgrade mode
+
+- `aic_build_id` (MSH) prints the Build ID, Git SHA, `rtconfig.h` hash,
+  target and UTC build time. The Build ID is generated before
+  compilation from the target, Git SHA, config hash and build time, so it
+  is fixed before link time and embedded in the firmware.
+  `artifacts/<target>/manifest.json` records the same Build ID plus the
+  ELF, ITB and IMG SHA256; the final IMG SHA256 is never embedded in the
+  IMG itself.
+- `aicupg` (Kconfig `BSP_USING_WRI`, default off, enabled only in
+  `d213-utest.config`): no argument sets BROM upgrade reason 4;
+  `aicupg gotobl` sets reason 5; any other argument prints
+  `Usage: aicupg [gotobl]` and does not reset. The reason is read back
+  before the WDT reset, and stale reasons are cleared at boot.
+
 ## Build
 
 Requirements:

@@ -13,8 +13,11 @@
 
 import argparse
 import datetime
+import glob
 import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -135,6 +138,57 @@ def sha256(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def parse_build_id(bsp):
+    path = os.path.join(bsp, "build", "build_id_gen.h")
+    fields = {}
+    if not os.path.isfile(path):
+        return fields
+    pattern = re.compile(r'#define\s+(AIC_BUILD_\w+)\s+"(.*)"')
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            match = pattern.match(line.strip())
+            if match:
+                fields[match.group(1)] = match.group(2)
+    return fields
+
+
+def file_entry(path):
+    if not os.path.isfile(path):
+        return None
+    return {
+        "path": path,
+        "size": os.path.getsize(path),
+        "sha256": sha256(path),
+    }
+
+
+def write_target_manifest(target, bsp, outdir, pkg):
+    """Machine-readable build identity for the HIL (never mtime based)."""
+    fields = parse_build_id(bsp)
+    images = sorted(glob.glob(os.path.join(outdir, "images", "*.img")))
+    itbs = sorted(glob.glob(os.path.join(outdir, "images", "*_os.itb")))
+    data = {
+        "target": target,
+        "board": fields.get(
+            "AIC_BUILD_TARGET",
+            "d213-demo128-nand" if target.startswith("d213")
+            else "d126-demo124-nor"),
+        "build_id": fields.get("AIC_BUILD_ID"),
+        "git_sha": fields.get("AIC_BUILD_GIT_SHA"),
+        "config_hash": fields.get("AIC_BUILD_CONFIG_HASH"),
+        "built_at": fields.get("AIC_BUILD_TIME"),
+        "package": pkg,
+        "elf": file_entry(os.path.join(outdir, "rtthread.elf")),
+        "itb": file_entry(itbs[0]) if itbs else None,
+        "img": file_entry(images[0]) if images else None,
+    }
+    path = os.path.join(outdir, "manifest.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    return path
 
 
 def tool_version():
@@ -272,6 +326,7 @@ def main():
             if info["package"]:
                 pkg = package(bsp, name, outdir, args.sdk, log)
             status = "PASS" if pkg != "FAIL" else "FAIL"
+            write_target_manifest(name, bsp, outdir, pkg)
             results.append((name, status, "build=PASS check=PASS package=" + pkg))
         except Exception as exc:
             results.append((name, "FAIL", str(exc)))

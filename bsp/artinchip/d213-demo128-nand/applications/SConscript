@@ -1,8 +1,25 @@
 from building import *
 
+import os
+import subprocess
+import sys
+
 cwd = GetCurrentDir()
-src = ['main.c', 'selftest.c', 'fpu_test_gcc.S']
-CPPPATH = [cwd]
+
+# Generate build/build_id_gen.h before anything is compiled.  The report
+# records the same values after packaging, and the HIL compares them with
+# the running firmware.
+gen = os.path.join(cwd, '..', 'tools', 'gen_build_id.py')
+build_dir = os.path.normpath(os.path.join(cwd, '..', 'build'))
+os.makedirs(build_dir, exist_ok=True)
+subprocess.check_call([
+    sys.executable, gen,
+    '--output', os.path.join(build_dir, 'build_id_gen.h'),
+    '--target', 'd213-demo128-nand',
+])
+
+src = ['main.c', 'selftest.c', 'fpu_test_gcc.S', 'build_id.c']
+CPPPATH = [cwd, build_dir]
 
 if GetDepend('BSP_USING_PERIPH_TEST'):
     src += ['periph_test.c']

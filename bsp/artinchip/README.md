@@ -74,9 +74,14 @@ python3 tools/check_elf.py
 ## D213 HIL 自动化（构建 → 烧录 → utest）
 
 `tools/d213_hil.py` 复用 `build-check.py`、`mk_firmware.py` 和
-`d213_utest.py`，把构建、静态检查、打包、进入升级模式、AiBurn/upgcmd
-烧录、RT-Thread 启动等待和 utest 串成一条流水线，输出 `report.json`
-（含 Git commit、镜像 SHA256、串口日志和每个阶段的状态）。
+`d213_utest.py`，把构建、静态检查、打包、进入升级模式、OS-only 烧录、
+RT-Thread 启动等待、Build ID 校验和 utest 串成一条流水线，输出
+`report.json`（含 Git commit、镜像 SHA256、Build ID、串口日志和每个阶段
+的状态）。
+
+镜像通过 `artifacts/<target>/manifest.json` 选择（绝不按 mtime）：
+manifest 记录 Build ID、Git SHA、config hash 以及 ELF/ITB/IMG 的
+SHA256。烧录后串口执行 `aic_build_id`，与 manifest 不一致立即失败。
 
 依赖：
 
@@ -84,9 +89,9 @@ python3 tools/check_elf.py
 - Luban-Lite SDK 和 RISC-V 工具链（构建/打包）；
 - `pycryptodomex`（SDK 的 `mk_image.py` 需要）；
 - AiBurn v2.1.0 的 `upgcmd.exe`
-  （`C:\Program Files\AiBurn\upgcmd.exe`），或 `artinchip-flash`
-  （`C:\Program Files (x86)\artinchip-flash\artinchip-flash.exe`，
-  默认烧录后端）。
+  （`C:\Program Files\AiBurn\upgcmd.exe`），或带 `--partition` 的
+  `artinchip-flash`（默认烧录后端；源码构建的二进制通过
+  `--flasher-path` 指定）。
 
 PowerShell 示例：
 
@@ -102,15 +107,19 @@ python bsp\artinchip\tools\d213_hil.py --mode enter-upgrade `
 python bsp\artinchip\tools\d213_hil.py --mode enter-upgrade `
   --upgrade-target bootloader --port COM9 --skip-build
 
-# 3. 完整闭环（首次自动烧录需要显式确认）
-#    artinchip-flash 后端会写 spl+env+os，因此需要 --confirm-full-flash
+# 3. OS-only 完整闭环（默认 --flash-scope os）
+python bsp\artinchip\tools\d213_hil.py --mode full `
+  --confirm-board d213-demo128 --skip-build --port COM9 --device 9 `
+  --flasher artinchip-flash `
+  --flasher-path C:\path\to\artinchip-flash\target\release\artinchip-flash.exe
+
+# 4. 整包恢复（独立授权；重写 spl+env+os）
 python bsp\artinchip\tools\d213_hil.py --mode full `
   --confirm-board d213-demo128 --confirm-full-flash `
-  --flasher artinchip-flash --port COM9 `
-  --sdk C:\Project\D50T-2-Lite\luban-lite-jc
+  --flash-scope full --port COM9 --skip-build
 ```
 
-`upgcmd` 后端示例（只写 os 分区）：
+`upgcmd` 后端示例（兼容/对照，只写 os 分区）：
 
 ```powershell
 python bsp\artinchip\tools\d213_hil.py --mode full `
@@ -119,27 +128,37 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
 ```
 
 状态码：`PASS`、`DRY_RUN`、`UPGRADE_ENTRY_OK`、`BUILD_FAIL`、
-`IMAGE_MISSING`、`IMAGE_MISMATCH`、`SERIAL_BUSY`、
-`UPGRADE_ENTRY_FAIL`、`DEVICE_NOT_FOUND`、`FLASH_FAIL`、`BOOT_FAIL`、
-`BOOT_TIMEOUT`、`TEST_FAIL`、`TEST_TIMEOUT`、`TEST_KNOWN_FAIL`、
-`AUTHORIZATION_REQUIRED`。
+`PACKAGE_FAIL`、`IMAGE_MISSING`、`IMAGE_MISMATCH`、`RESOURCE_BUSY`、
+`SERIAL_BUSY`、`UPGRADE_ENTRY_FAIL`、`DEVICE_NOT_FOUND`、
+`DEVICE_AMBIGUOUS`、`FLASH_FAIL`、`FLASH_INTERRUPTED`、`BOOT_FAIL`、
+`BOOT_TIMEOUT`、`BUILD_ID_MISMATCH`、`TEST_FAIL`、`TEST_TIMEOUT`、
+`TEST_KNOWN_FAIL`、`AUTHORIZATION_REQUIRED`。
 
 安全边界：
 
 - 默认 `--mode plan`，不改变板子状态；
 - `--mode full` 必须给出 `--confirm-board d213-demo128`；
-- 默认 `--flasher artinchip-flash`，其 CLI 固定写 `spl+env+os`，需要
-  `--confirm-full-flash`；`--flasher upgcmd --flash-scope os` 只写
-  `image.target.os`，保留 SPL、Bootloader、env 和 data 分区；
+- 默认 `--flash-scope os` 使用 `--partition os`，只写 `image.target.os`；
+  整包 `--flash-scope full` 才需要 `--confirm-full-flash`；
+- 烧录后必须通过 `aic_build_id` 与 manifest 的 Build ID 比对；
 - `artinchip-flash` 不要加 `--verbose`：日志 I/O 会拖慢 updater
   重新枚举的时序，导致重连超时；
-- 烧录重试上限 3 次；utest 失败不会触发自动重刷；
+- 默认烧录尝试 1 次（最大 3 次），失败不自动重刷；
+- 构建、串口和 USB 目标分别使用文件锁，防止并发 Agent 互相干扰；
 - 不执行 `flasherase`、eFuse 或安全配置操作。
 
-实机结果（2026-11-06，D213EC-DEMO-V4-0，COM9）：
+实机结果（2026-11-06/07，D213EC-DEMO-V4-0，COM9）：
 
-- `d213_hil.py --mode full --flasher artinchip-flash`：烧录 42.5 s，
-  所有组件 CRC OK，随后启动、`aicupg` 身份校验和 utest 全部通过；
+- `d213_hil.py --mode full --flash-scope os`：进入升级 PASS、OS-only
+  烧录 PASS（约 42 s，全部 CRC OK）、启动 PASS（约 2.1 s）、
+  `aic_build_id` 与 manifest 一致、utest 仅 `bsp.d213.fpu.context`
+  已知失败；
+- OS-only 只发送 `image.info` + `image.target.os`；两次连续 OS-only
+  前后 `spl`（4 个采样点）和 `env` 的 CRC 完全不变，`env`/`os` 与镜像
+  CRC 一致；`rodata`/`data` 为 NFTL，线性 MSH 读命令不可读，明确标记
+  未验证（烧录计划从不选择它们）；
+- Build ID manifest：`artinchip/artifacts/d213-utest/manifest.json`
+  （Build ID、Git SHA、config hash、ELF/ITB/IMG SHA256）；
 - `aicupg` → `upgcmd -l` 识别为 `Boot ROM (D21xB)`；
 - `aicupg gotobl` → `upgcmd -l` 识别为 `Bootloader`；
 - 恢复：串口 Ctrl-C + `nand_boot` 回到 RT-Thread，无需重新上电；
@@ -147,7 +166,13 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
   `core.mutex`、`core.mutex_pi` PASS；`bsp.d213.*` 仅有
   `bsp.d213.fpu.context` 已知失败（exit 2）。
 - 本机 `upgcmd image` 在 updater 重新枚举阶段会 `Access denied`，
-  因此 HIL 默认使用 `artinchip-flash` 后端。
+  因此 HIL 默认使用 `artinchip-flash`；Bootloader 模式的 USB 端点
+  不稳定，`gotobl` 后建议 `--no-updater`。
+- BROM 的 USB 偶发不枚举（Windows PnP 看不到设备、串口无输出）：
+  `aicupg` 已 latch 但 30 s 内没有设备出现，HIL 以
+  `UPGRADE_ENTRY_FAIL` 退出且不自动重试；此时只能断电重连。之后
+  `artinchip-flash` 路径完全不调用 `upgcmd`，避免其 USB 探测把 BROM
+  会话卡死。
 
 ## 支持矩阵
 
@@ -155,7 +180,7 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
 |---|---|---|---|---|
 | `d213-minimal` | UART0、tick、FinSH、FPU 自检 | PASS | PASS | PENDING |
 | `d213-default` | 原默认外设 + LVDS/DE + GE + GT911 | PASS | PASS | PENDING |
-| `d213-utest` | utest 固件 + WRI/aicupg | PASS | PASS | PASS（升级模式 + utest；自动烧录待授权） |
+| `d213-utest` | utest 固件 + WRI/aicupg + Build ID | PASS | PASS | PASS（OS-only 闭环 + utest） |
 | `d126-minimal` | UART0、tick、GPIO、CLIC/CORET | PASS | PASS（占位） | PENDING |
 
 D126 真实固件需要 `d126-demo124-nor` 的原厂 `bootloader.bin`。没有

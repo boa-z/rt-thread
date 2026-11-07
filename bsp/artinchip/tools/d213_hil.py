@@ -123,10 +123,35 @@ def upgcmd_devices(upgcmd, timeout=30):
     return parse_devices(text), text
 
 
+def parse_scan_devices(text):
+    return [m.strip() for m in re.findall(r"path=(\S+)", text)]
+
+
+def aicflash_scan(flasher, timeout=20):
+    rc, text = capture([flasher, "scan"], timeout)
+    return parse_scan_devices(text), text
+
+
+def flasher_exe(args):
+    return args.flasher_path or DEFAULT_AICFLASH
+
+
 def parse_image(upgcmd, image):
     rc, text = capture([upgcmd, "-i", image], 60)
     product = re.search(r"product\s*:\s*(\S+)", text)
     components = re.findall(r"name\s*:\s*(image\.target\.\S+)", text)
+    return {
+        "product": product.group(1) if product else None,
+        "components": components,
+        "raw": text,
+    }
+
+
+def parse_image_aicflash(flasher, image):
+    """Parse the image locally with the flasher; no USB access."""
+    rc, text = capture([flasher, "info", image], 60)
+    product = re.search(r"Product:\s*(\S+)", text)
+    components = re.findall(r"\]\s+(image\.target\.\S+)\s", text)
     return {
         "product": product.group(1) if product else None,
         "components": components,
@@ -250,13 +275,110 @@ def stage(report, name, status, **extra):
     return entry
 
 
-def find_image():
-    pattern = os.path.join(ARTIFACTS, TARGET, "images",
-                           "d21x_d213_demo128_*.img")
-    matches = glob.glob(pattern)
-    if not matches:
-        return None
-    return max(matches, key=os.path.getmtime)
+class FileLock:
+    """Cross-process exclusive lock (build / serial / USB target)."""
+
+    def __init__(self, path):
+        self.path = path
+        self.file = None
+
+    def acquire(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.file = open(self.path, "a+")
+        try:
+            self.file.seek(0, os.SEEK_END)
+            if self.file.tell() == 0:
+                self.file.write("0")
+                self.file.flush()
+            self.file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            self.file.close()
+            self.file = None
+            return False
+
+    def release(self):
+        if not self.file:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.file.close()
+            self.file = None
+
+
+def lock_path(name):
+    return os.path.join(ARTIFACTS, ".locks", name)
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def load_manifest(target):
+    path = os.path.join(ARTIFACTS, target, "manifest.json")
+    if not os.path.isfile(path):
+        return None, path
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f), path
+    except (OSError, ValueError):
+        return None, path
+
+
+def resolve_image(args):
+    """Select the image from the build manifest, never from mtime."""
+    manifest, manifest_path = load_manifest(TARGET)
+    build_id = (manifest or {}).get("build_id")
+    if args.image:
+        image = args.image
+        if not os.path.isfile(image):
+            return None, None, build_id, manifest_path, "image not found: %s" % image
+        sha = sha256_file(image)
+        expected = ((manifest or {}).get("img") or {}).get("sha256")
+        if expected and expected != sha:
+            return (image, sha, build_id, manifest_path,
+                    "explicit image does not match the build manifest")
+        return image, sha, build_id, manifest_path, None
+    if not manifest or not manifest.get("img"):
+        return None, None, build_id, manifest_path, "no manifest.json; run build-check first"
+    entry = manifest["img"]
+    image = entry.get("path")
+    if not image or not os.path.isfile(image):
+        return None, None, build_id, manifest_path, "manifest image missing: %s" % image
+    return image, entry.get("sha256"), build_id, manifest_path, None
+
+
+def parse_build_id_output(text):
+    match = re.search(r"^build_id:\s*(\S+)\s*$", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def classify_flash_failure(text):
+    if "Multiple ArtInChip devices" in text:
+        return "DEVICE_AMBIGUOUS"
+    if "No ArtInChip device" in text or "No device is connected" in text:
+        return "DEVICE_NOT_FOUND"
+    if ("Bulk write failed" in text or "device returned CSW" in text
+            or "No CSW" in text or "Pipe" in text):
+        return "FLASH_INTERRUPTED"
+    return "FLASH_FAIL"
 
 
 def enter_upgrade(args, report, report_dir):
@@ -296,15 +418,24 @@ def enter_upgrade(args, report, report_dir):
     deadline = time.monotonic() + args.upgrade_timeout
     last = ""
     while time.monotonic() < deadline:
-        stages, text = upgcmd_devices(args.upgcmd)
-        last = text
-        if stages:
-            stage(report, "enter_upgrade", "PASS", device=stages[0])
-            return True, stages[0]
+        if args.flasher == "artinchip-flash":
+            # upgcmd -l can time out and leave the BROM session wedged;
+            # the flasher's own scan is the safe discovery path.
+            paths, _ = aicflash_scan(flasher_exe(args), 10)
+            if paths:
+                stage(report, "enter_upgrade", "PASS",
+                      device="USB path %s" % paths[0])
+                return True, "USB path %s" % paths[0]
+        else:
+            stages, text = upgcmd_devices(args.upgcmd, 8)
+            last = text
+            if stages:
+                stage(report, "enter_upgrade", "PASS", device=stages[0])
+                return True, stages[0]
         time.sleep(0.5)
 
     stage(report, "enter_upgrade", "DEVICE_NOT_FOUND")
-    return False, "upgcmd did not see the device"
+    return False, "no upgrade device appeared"
 
 
 def wait_boot(args, report, report_dir):
@@ -333,27 +464,38 @@ def wait_boot(args, report, report_dir):
     return False, "RT-Thread prompt not seen in %ss" % args.boot_timeout
 
 
-def verify_identity(args, report, report_dir):
-    """Safe probe: the flashed image must expose the aicupg command."""
+def verify_build_id(args, report, report_dir, expected):
+    """The running firmware must report the exact manifest Build ID."""
     try:
         console = open_console(args, os.path.join(report_dir, "serial.log"))
     except Exception as exc:
-        stage(report, "identity", "SERIAL_BUSY", error=str(exc))
+        stage(report, "build_id", "SERIAL_BUSY", error=str(exc))
         return False, "serial busy: %s" % exc
 
     try:
         if not console.wait_prompt(10):
-            stage(report, "identity", "NO_PROMPT")
+            stage(report, "build_id", "NO_PROMPT")
             return False, "MSH prompt not found"
         console.buffer = ""
-        console.send("aicupg foo")
-        if console.read_until(("Usage: aicupg [gotobl]",), 5):
-            stage(report, "identity", "PASS")
-            return True, "aicupg command present"
-        stage(report, "identity", "MISMATCH")
-        return False, "running firmware does not expose aicupg"
+        console.send("aic_build_id")
+        if not console.read_until(("build_id:",), 5):
+            stage(report, "build_id", "BUILD_ID_MISMATCH",
+                  reason="aic_build_id unavailable")
+            return False, "running firmware has no build_id"
+        console.drain(0.2)
+        actual = parse_build_id_output(console.buffer)
+        if not expected:
+            stage(report, "build_id", "BUILD_ID_MISMATCH",
+                  reason="manifest has no build_id", actual=actual)
+            return False, "manifest has no build_id"
+        if actual != expected:
+            stage(report, "build_id", "BUILD_ID_MISMATCH",
+                  expected=expected, actual=actual)
+            return False, "build_id %s != manifest %s" % (actual, expected)
+        stage(report, "build_id", "PASS", build_id=actual)
+        return True, "build_id matched"
     except Exception as exc:
-        stage(report, "identity", "SERIAL_ERROR", error=str(exc))
+        stage(report, "build_id", "SERIAL_ERROR", error=str(exc))
         return False, "serial error: %s" % exc
     finally:
         console.close()
@@ -410,6 +552,9 @@ def main():
                         help="flash backend (default: artinchip-flash)")
     parser.add_argument("--flasher-path", default=None,
                         help="path to artinchip-flash.exe")
+    parser.add_argument("--device", default=None,
+                        help="USB selector for artinchip-flash "
+                             "(port path 9-2 or bus:address 1:45)")
     parser.add_argument("--image", default=None,
                         help="image path (default: newest artifacts image)")
     parser.add_argument("--skip-build", action="store_true")
@@ -419,7 +564,7 @@ def main():
     parser.add_argument("--flash-timeout", type=int, default=300)
     parser.add_argument("--boot-timeout", type=int, default=60)
     parser.add_argument("--utest-timeout", type=int, default=180)
-    parser.add_argument("--flash-attempts", type=int, default=2,
+    parser.add_argument("--flash-attempts", type=int, default=1,
                         help="flash attempts (default 2, cap %d)" %
                              MAX_FLASH_ATTEMPTS)
     parser.add_argument("--upgrade-target", choices=("brom", "bootloader"),
@@ -440,8 +585,9 @@ def main():
     parser.add_argument("--report-dir", default=None)
     args = parser.parse_args()
 
+    run_id = stamp() + "-%d" % os.getpid()
     report_dir = args.report_dir or os.path.join(
-        ARTIFACTS, "d213-hil", stamp())
+        ARTIFACTS, "d213-hil", run_id)
     os.makedirs(report_dir, exist_ok=True)
 
     report = {
@@ -450,6 +596,7 @@ def main():
         "started": now_iso(),
         "finished": None,
         "duration_s": None,
+        "run_id": run_id,
         "mode": args.mode,
         "status": "RUNNING",
         "error": None,
@@ -461,12 +608,18 @@ def main():
             "dirty": bool(git("status", "--porcelain")),
         },
         "image": None,
+        "manifest": None,
+        "build_id": None,
         "stages": {},
         "logs": {"dir": report_dir},
     }
     started = time.monotonic()
 
+    locks = []
+
     def finish(status, error=None, code=1):
+        for lock in locks:
+            lock.release()
         report["status"] = status
         report["error"] = error
         report["finished"] = now_iso()
@@ -488,13 +641,13 @@ def main():
             return finish("AUTHORIZATION_REQUIRED",
                           "--flash-scope full rewrites SPL/Bootloader/env; "
                           "pass --confirm-full-flash to allow it", 2)
-        if args.flasher == "artinchip-flash" and not args.confirm_full_flash:
-            return finish("AUTHORIZATION_REQUIRED",
-                          "the artinchip-flash CLI writes spl+env+os; pass "
-                          "--confirm-full-flash to allow it", 2)
     attempts = max(1, min(args.flash_attempts, MAX_FLASH_ATTEMPTS))
 
     # --- build + package --------------------------------------------------
+    build_lock = FileLock(lock_path("build-%s.lock" % TARGET))
+    if not build_lock.acquire():
+        return finish("RESOURCE_BUSY", "build lock is held")
+    locks.append(build_lock)
     if args.skip_build:
         stage(report, "build", "SKIP")
     else:
@@ -511,45 +664,84 @@ def main():
         if timeout:
             return finish("BUILD_FAIL", "build timed out")
         if rc != 0:
-            return finish("BUILD_FAIL", "build/check/package failed")
+            text = read_text(os.path.join(report_dir, "build.log"))
+            if "package=FAIL" in text:
+                return finish("PACKAGE_FAIL", "static check passed but packaging failed")
+            return finish("BUILD_FAIL", "build/check failed")
         stage(report, "build", "PASS",
               log=os.path.join(report_dir, "build.log"))
 
-    image = args.image or find_image()
-    if not image or not os.path.isfile(image):
-        stage(report, "image", "IMAGE_MISSING")
-        return finish("IMAGE_MISSING", "no packaged image found")
-
-    info = parse_image(args.upgcmd, image)
-    report["image"] = {
-        "path": image,
-        "sha256": sha256_file(image),
-        "size": os.path.getsize(image),
-        "product": info["product"],
-        "components": info["components"],
-    }
-    if info["product"] != PRODUCT:
-        stage(report, "image", "IMAGE_MISMATCH", product=info["product"])
-        return finish("IMAGE_MISMATCH",
-                      "image product %r does not match %r" %
-                      (info["product"], PRODUCT))
-    if args.flash_scope == "os" and "image.target.os" not in info["components"]:
-        return finish("IMAGE_MISMATCH", "image has no image.target.os")
-    stage(report, "image", "PASS", sha256=report["image"]["sha256"])
+    if args.mode == "enter-upgrade":
+        image = None
+        build_id = None
+        stage(report, "image", "SKIP", reason="enter-upgrade only")
+    else:
+        image, manifest_sha, build_id, manifest_path, error = resolve_image(args)
+        if error:
+            stage(report, "image", "IMAGE_MISSING")
+            return finish("IMAGE_MISSING", error)
+        image_sha = sha256_file(image)
+        if manifest_sha and image_sha != manifest_sha:
+            stage(report, "image", "IMAGE_MISMATCH")
+            return finish("IMAGE_MISMATCH", "image SHA256 does not match manifest")
+        if args.flasher == "artinchip-flash":
+            info = parse_image_aicflash(flasher_exe(args), image)
+        else:
+            info = parse_image(args.upgcmd, image)
+        report["image"] = {
+            "path": image,
+            "sha256": image_sha,
+            "size": os.path.getsize(image),
+            "product": info["product"],
+            "components": info["components"],
+            "build_id": build_id,
+            "manifest": manifest_path,
+        }
+        report["build_id"] = build_id
+        report["manifest"] = manifest_path
+        if info["product"] != PRODUCT:
+            stage(report, "image", "IMAGE_MISMATCH", product=info["product"])
+            return finish("IMAGE_MISMATCH",
+                          "image product %r does not match %r" %
+                          (info["product"], PRODUCT))
+        if args.flash_scope == "os" and "image.target.os" not in info["components"]:
+            return finish("IMAGE_MISMATCH", "image has no image.target.os")
+        if args.mode == "full" and not build_id:
+            return finish("IMAGE_MISMATCH",
+                          "manifest has no build_id; rebuild with gen_build_id")
+        stage(report, "image", "PASS", sha256=image_sha, build_id=build_id)
 
     # --- device discovery -------------------------------------------------
-    stages, text = upgcmd_devices(args.upgcmd)
+    stages = []
+    scan_paths = []
+    if args.flasher == "artinchip-flash":
+        # Never touch upgcmd on this backend: its USB probe can wedge
+        # the BROM enumeration.
+        scan_paths, text = aicflash_scan(flasher_exe(args), 20)
+    else:
+        stages, text = upgcmd_devices(args.upgcmd)
     with open(os.path.join(report_dir, "upgcmd-list-initial.log"), "w",
               encoding="utf-8") as f:
         f.write(text)
-    stage(report, "device", "PASS" if stages else "NOT_FOUND",
-          devices=stages)
+    stage(report, "device", "PASS" if (stages or scan_paths) else "NOT_FOUND",
+          devices=stages, usb_paths=scan_paths)
 
     if args.mode == "plan":
         return finish("DRY_RUN", None, 0)
 
+    serial_lock = FileLock(
+        lock_path("serial-%s.lock" % args.port.replace(":", "_")))
+    if not serial_lock.acquire():
+        return finish("RESOURCE_BUSY", "serial lock is held")
+    locks.append(serial_lock)
+    target = args.device or args.port
+    flash_lock = FileLock(lock_path("flash-%s.lock" % target.replace(":", "_")))
+    if not flash_lock.acquire():
+        return finish("RESOURCE_BUSY", "USB target lock is held")
+    locks.append(flash_lock)
+
     # --- enter upgrade mode ----------------------------------------------
-    if not stages:
+    if not stages and not scan_paths:
         ok, detail = enter_upgrade(args, report, report_dir)
         if not ok:
             return finish("UPGRADE_ENTRY_FAIL", detail)
@@ -567,14 +759,21 @@ def main():
 
     flash_log = os.path.join(report_dir, "flash.log")
     last_error = None
+    last_status = None
     if args.flasher == "artinchip-flash":
-        flasher = args.flasher_path or DEFAULT_AICFLASH
+        flasher = flasher_exe(args)
         if not os.path.isfile(flasher):
             return finish("FLASH_FAIL", "flasher not found: %s" % flasher)
     for attempt in range(1, attempts + 1):
         if args.flasher == "artinchip-flash":
             # No --verbose: its console logging perturbs the reconnect timing.
             cmd = [flasher, "burn", image]
+            if args.flash_scope == "os":
+                cmd += ["--partition", "os"]
+            if args.upgrade_target == "bootloader":
+                cmd += ["--no-updater"]
+            if args.device:
+                cmd += ["--device", args.device]
         else:
             cmd = [args.upgcmd, "-p"]
             if args.flash_transport == "uart":
@@ -585,8 +784,10 @@ def main():
         rc, timeout = run_logged(cmd, flash_log, args.flash_timeout)
         if timeout:
             last_error = "flash timed out"
+            last_status = "FLASH_INTERRUPTED"
         elif rc != 0:
-            last_error = "upgcmd exited %d" % rc
+            last_status = classify_flash_failure(read_text(flash_log))
+            last_error = "%s exited %d" % (args.flasher, rc)
         else:
             last_error = None
             break
@@ -602,16 +803,13 @@ def main():
                         break
 
     if last_error:
-        return finish("FLASH_FAIL", last_error)
+        return finish(last_status or "FLASH_FAIL", last_error)
 
     stage(report, "flash", "PASS", attempts=attempt,
-          flasher=args.flasher,
-          scope=("spl+env+os" if args.flasher == "artinchip-flash"
-                 else args.flash_scope),
-          log=flash_log)
+          flasher=args.flasher, scope=args.flash_scope, log=flash_log)
 
     # --- boot -------------------------------------------------------------
-    if args.flash_transport == "usb":
+    if args.flash_transport == "usb" and args.flasher != "artinchip-flash":
         stages, _ = upgcmd_devices(args.upgcmd)
         if stages and args.upgrade_target == "brom":
             capture([args.upgcmd, "continue"], 30)
@@ -619,10 +817,11 @@ def main():
     if not ok:
         return finish("BOOT_FAIL", detail)
 
-    # A/B slot fallback could boot the previous image; probe the command.
-    ok, detail = verify_identity(args, report, report_dir)
+    # Reject a board that still runs the previous image or the other slot.
+    ok, detail = verify_build_id(args, report, report_dir,
+                                 report.get("build_id"))
     if not ok:
-        return finish("BOOT_FAIL", detail)
+        return finish("BUILD_ID_MISMATCH", detail)
 
     # --- utest ------------------------------------------------------------
     result = run_utest(args, report, report_dir)
