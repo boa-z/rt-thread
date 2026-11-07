@@ -33,14 +33,14 @@ branch: bsp/artinchip-next-riscv
 产物目录：
 
 ```text
-artifacts/d213-minimal/
-artifacts/d213-default/
-artifacts/d126-minimal/
-artifacts/manifest.md
-artifacts/SHA256SUMS
+bsp/artinchip/artifacts/d213-minimal/
+bsp/artinchip/artifacts/d213-default/
+bsp/artinchip/artifacts/d126-minimal/
+bsp/artinchip/artifacts/manifest.md
+bsp/artinchip/artifacts/SHA256SUMS
 ```
 
-SHA-256 以 `artifacts/manifest.md` 和 `SHA256SUMS` 为准；每次重新构建
+SHA-256 以 `bsp/artinchip/artifacts/manifest.md` 和 `SHA256SUMS` 为准；每次重新构建
 哈希都会变化。
 
 ## 1. D213：恢复能力（先做）
@@ -55,7 +55,7 @@ SHA-256 以 `artifacts/manifest.md` 和 `SHA256SUMS` 为准；每次重新构建
 **推荐第一个测试固件**：
 
 ```text
-artifacts/d213-minimal/images/d21x_d213_demo128_page_2k_block_128k_v1.0.0.img
+bsp/artinchip/artifacts/d213-minimal/images/d21x_d213_demo128_page_2k_block_128k_v1.0.0.img
 ```
 
 烧录前确认：
@@ -120,7 +120,7 @@ msh > periph_status
 固件：
 
 ```text
-artifacts/d213-default/images/d21x_d213_demo128_page_2k_block_128k_v1.0.0.img
+bsp/artinchip/artifacts/d213-default/images/d21x_d213_demo128_page_2k_block_128k_v1.0.0.img
 ```
 
 先重复第 2 节最小系统检查，再执行：

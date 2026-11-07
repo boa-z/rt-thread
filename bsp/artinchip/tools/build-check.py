@@ -22,7 +22,7 @@ import sys
 
 ARTICHIP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RTT_ROOT = os.path.normpath(os.path.join(ARTICHIP_DIR, "..", ".."))
-ARTIFACTS = os.path.join(RTT_ROOT, "artifacts")
+ARTIFACTS = os.path.join(ARTICHIP_DIR, "artifacts")
 CHECKER = os.path.join(ARTICHIP_DIR, "tools", "check_elf.py")
 
 TARGETS = {
@@ -111,6 +111,24 @@ def scons_cmd():
     return "scons"
 
 
+def resolve_toolchain(sdk, explicit):
+    """The upstream building.py requires rtconfig.EXEC_PATH to exist."""
+    if explicit:
+        return explicit
+    env = os.getenv("RTT_EXEC_PATH")
+    if env:
+        return env
+    if sdk:
+        candidate = os.path.join(sdk, "toolchain", "bin")
+        if os.path.isdir(candidate):
+            return candidate
+    prefix = os.getenv("RTT_CC_PREFIX", "riscv64-unknown-elf-")
+    gcc = shutil.which(prefix + "gcc")
+    if gcc:
+        return os.path.dirname(gcc)
+    return None
+
+
 def sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -176,12 +194,21 @@ def main():
     parser.add_argument("--targets", nargs="*", default=list(TARGETS),
                         choices=list(TARGETS))
     parser.add_argument("--sdk", default=os.getenv("AIC_SDK_DIR"))
+    parser.add_argument("--toolchain", default=None,
+                        help="RISC-V toolchain bin directory (default: "
+                             "RTT_EXEC_PATH, <sdk>/toolchain/bin or PATH)")
     parser.add_argument("--jobs", default="8")
     parser.add_argument("--skip-build", action="store_true")
     args = parser.parse_args()
 
     if not os.path.isfile(CHECKER):
         sys.exit("missing shared checker: " + CHECKER)
+
+    toolchain = resolve_toolchain(args.sdk, args.toolchain)
+    if not toolchain:
+        sys.exit("no RISC-V toolchain found; pass --toolchain or set "
+                 "RTT_EXEC_PATH")
+    os.environ["RTT_EXEC_PATH"] = toolchain
 
     os.makedirs(ARTIFACTS, exist_ok=True)
     results = []
@@ -287,10 +314,17 @@ def write_manifest(results, stamp, sdk):
         head = "unknown"
     try:
         upstream = subprocess.check_output(
-            ["git", "rev-parse", "upstream/master"], cwd=RTT_ROOT,
-            text=True).strip()
+            ["git", "rev-parse", "HEAD"], cwd=RTT_ROOT, text=True).strip()
     except Exception:
         upstream = "unknown"
+    for ref in ("origin/master", "upstream/master"):
+        try:
+            upstream = subprocess.check_output(
+                ["git", "rev-parse", ref], cwd=RTT_ROOT, text=True,
+                stderr=subprocess.DEVNULL).strip()
+            break
+        except Exception:
+            continue
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("# ArtInChip build manifest\n\n")

@@ -5,6 +5,8 @@
 
 ```text
 bsp/artinchip/
+├── .gitignore           local artifacts/ and Python cache
+├── artifacts/           ignored build outputs, images and HIL logs
 ├── d213-demo128-nand/   D213EC-DEMO-V4-0, C906 RV64GC, PLIC + CLINT
 ├── d126-demo124-nor/    D126FxR-DEMO-V1-1, E907F RV32, CLIC + CORET
 └── tools/
@@ -63,11 +65,11 @@ python3 tools/check_elf.py
 4. `scons -c` + `scons -j8`；
 5. 运行共享 ELF/map 检查；
 6. 打包（D213 真实 SDK 资源；D126 占位保护）；
-7. 把 ELF/BIN/IMG 和日志放到 `artifacts/`；
-8. 生成 `artifacts/manifest.md`；
+7. 把 ELF/BIN/IMG 和日志放到 `bsp/artinchip/artifacts/`；
+8. 生成 `bsp/artinchip/artifacts/manifest.md`；
 9. 恢复原 `.config`/`rtconfig.h`。
 
-`artifacts/` 被 `.gitignore` 排除，不进入源码历史。
+`bsp/artinchip/artifacts/` 由 `bsp/artinchip/.gitignore` 排除，不进入源码历史。
 
 ## D213 HIL 自动化（构建 → 烧录 → utest）
 

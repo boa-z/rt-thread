@@ -221,7 +221,7 @@ Or use the host-side serial runner (requires `pip install pyserial`):
 
 ```sh
 python bsp/artinchip/tools/d213_utest.py --port COM7 \
-    --log artifacts/d213-utest-serial.log
+    --log bsp/artinchip/artifacts/d213-utest-serial.log
 ```
 
 `bsp.d213.fpu.context` is a known failure on the pure BSP because the

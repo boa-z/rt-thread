@@ -70,7 +70,7 @@ target/d12p/d126-demo124-nor
 - D12p 打包。
 
 D213 回归：同一分支上 D213 minimal/default clean build 均 PASS，
-详见 `artifacts/manifest.md` 和 `bsp/artinchip/TEST-TOMORROW.md`。
+详见 `bsp/artinchip/artifacts/manifest.md` 和 `bsp/artinchip/TEST-TOMORROW.md`。
 
 ## 3. 目录结构
 

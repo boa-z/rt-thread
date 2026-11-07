@@ -1064,21 +1064,10 @@ def EndBuilding(target, program = None):
         from cscope import CscopeDatabase
         CscopeDatabase(Projects)
 
-    # Configuration, help, dry-run, clean, project generation and
-    # distribution do not execute the target compiler.
-    toolchain_free = any((
-        GetOption('help'),
-        GetOption('target'),
-        GetOption('clean'),
-        GetOption('no_exec'),
-        GetOption('make-dist'),
-        GetOption('make-dist-ide'),
-        GetOption('dist_strip'),
-        GetOption('cscope'),
-    ))
-    if not toolchain_free and not os.path.exists(rtconfig.EXEC_PATH):
-        print ("Error: the toolchain path (" + rtconfig.EXEC_PATH + ") is not exist, please check 'EXEC_PATH' in path or rtconfig.py.")
-        sys.exit(1)
+    if not GetOption('help') and not GetOption('target'):
+        if not os.path.exists(rtconfig.EXEC_PATH):
+            print ("Error: the toolchain path (" + rtconfig.EXEC_PATH + ") is not exist, please check 'EXEC_PATH' in path or rtconfig.py.")
+            sys.exit(1)
 
     if need_exit:
         exit(0)

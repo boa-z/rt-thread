@@ -41,7 +41,7 @@ except ImportError:
 
 ARTICHIP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RTT_ROOT = os.path.normpath(os.path.join(ARTICHIP_DIR, "..", ".."))
-ARTIFACTS = os.path.join(RTT_ROOT, "artifacts")
+ARTIFACTS = os.path.join(ARTICHIP_DIR, "artifacts")
 BUILD_CHECK = os.path.join(ARTICHIP_DIR, "tools", "build-check.py")
 UTEST_RUNNER = os.path.join(ARTICHIP_DIR, "tools", "d213_utest.py")
 
