@@ -148,6 +148,14 @@ def main():
 
     os.makedirs(out, exist_ok=True)
 
+    # Remove images from previous runs: the glob below would otherwise
+    # pick up stale files and double-suffix them after os.replace()
+    # (observed when build-check packages the same target twice).
+    for stale in glob.glob(os.path.join(out, "*.img")) + \
+                 [os.path.join(out, "DO_NOT_FLASH.txt")]:
+        if os.path.exists(stale):
+            os.remove(stale)
+
     shutil.copy2(elf, os.path.join(out, "rtthread.elf"))
     shutil.copy2(os.path.join(PACK_DIR, "image_cfg.json"),
                  os.path.join(out, "image_cfg.json"))
