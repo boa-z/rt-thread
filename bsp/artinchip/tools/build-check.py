@@ -61,6 +61,7 @@ TARGETS = {
             "bsp.d213.fpu.context",
             "bsp.d213.can0.config",
             "bsp.d213.spinand.ro",
+            "aicupg",
         ],
     },
     "d213-nand-readonly": {

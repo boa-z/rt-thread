@@ -187,6 +187,19 @@ config BSP_USING_RTC
     default y
     select RT_USING_RTC
 
+config BSP_USING_WRI
+    bool "Enable WRI reboot reason and the aicupg command"
+    default n
+    depends on BSP_USING_WDT
+    help
+        Exposes "aicupg" and "aicupg gotobl" in MSH.  "aicupg" latches
+        REBOOT_REASON_UPGRADE so the BROM enters its USB/UART upgrade loop;
+        "aicupg gotobl" latches REBOOT_REASON_BL_UPGRADE for the vendor
+        Bootloader upgrade command.  The board is reset through the
+        watchdog, which preserves the always-on WRI/RTC boot information.
+        The vendor Bootloader must be built with AIC_USING_WRI.
+        This option does not implement AICUPG, USB upgrade or NAND writes.
+
 config BSP_USING_PERIPH_TEST
     bool "Enable peripheral MSH test commands"
     default y
