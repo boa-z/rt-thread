@@ -30,7 +30,6 @@
 #include <rthw.h>
 #include <rtthread.h>
 #include <rtdevice.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "drv_spinand.h"
@@ -98,15 +97,30 @@ struct spinand_model
     rt_uint16_t pages_per_block;
     rt_uint16_t block_count;
     rt_uint16_t ecc_strength;
+    rt_uint8_t hw_verified;        /* 1 = checked on real D213 hardware */
 };
 
+/*
+ * Parameters ported from Luban-Lite winbond.c; only W25N01GV has ever
+ * been read on real hardware in this BSP.  The remaining entries keep
+ * the raw table parameters for diagnostics only, and the MTD partition
+ * registration refuses to use them (see spinand_register_partitions):
+ *
+ *   - W25N01KV: Luban-Lite OOB=64 vs Linux mainline OOB=96 (conflict)
+ *   - W25N02KV: Luban-Lite ECC 1-bit/512B vs Linux mainline 8-bit (conflict)
+ *   - W25N02KW: Luban-Lite 1024 blocks vs Linux mainline 2048 (conflict)
+ *   - W25N02JW: not present on any available D213 board
+ *
+ * Do not "fix" these by copying from the other source: until parameter
+ * data is confirmed against the datasheet, they are marked unverified.
+ */
 static const struct spinand_model spinand_models[] =
 {
-    {{0xEF, 0xAA, 0x21}, "W25N01GV", 2048,  64, 64, 1024, 1},
-    {{0xEF, 0xAE, 0x21}, "W25N01KV", 2048,  64, 64, 1024, 4},
-    {{0xEF, 0xAA, 0x22}, "W25N02KV", 2048, 128, 64, 2048, 1},
-    {{0xEF, 0xBA, 0x22}, "W25N02KW", 2048, 128, 64, 1024, 1},
-    {{0xEF, 0xBF, 0x22}, "W25N02JW", 2048,  64, 64, 2048, 1},
+    {{0xEF, 0xAA, 0x21}, "W25N01GV", 2048,  64, 64, 1024, 1, 1},
+    {{0xEF, 0xAE, 0x21}, "W25N01KV", 2048,  64, 64, 1024, 4, 0},
+    {{0xEF, 0xAA, 0x22}, "W25N02KV", 2048, 128, 64, 2048, 1, 0},
+    {{0xEF, 0xBA, 0x22}, "W25N02KW", 2048, 128, 64, 1024, 1, 0},
+    {{0xEF, 0xBF, 0x22}, "W25N02JW", 2048,  64, 64, 2048, 1, 0},
 };
 
 /* ------------------------------------------------------------------ */
@@ -186,7 +200,13 @@ static int spinand_transfer(const struct spi_nand_cmd_cfg *cfg, rt_uint32_t addr
     msg.parent.next = RT_NULL;
 
     ret = rt_qspi_transfer_message(spinand.qspi, &msg);
-    if (ret <= 0)
+    if (ret < 0)
+    {
+        /* Keep the distinction: the QSPI layer maps a transfer-watchdog
+         * expiry to -RT_ETIMEOUT, everything else is a transport error. */
+        return (ret == -RT_ETIMEOUT) ? -RT_ETIMEOUT : -RT_EIO;
+    }
+    if (ret == 0)
         return -RT_EIO;
     if (datacount != 0 && ret < (rt_ssize_t)datacount)
         return -RT_EIO;
@@ -262,11 +282,20 @@ static int spinand_read_cache(rt_uint32_t column, rt_uint8_t *buf, rt_uint32_t l
 }
 
 /*
- * Decode the ECC bits of the status register.
+ * Decode the ECC bits (STATUS bits 5:4) of the status register.
+ *
+ * All Winbond parts in the table agree on 00b (clean) / 01b (corrected)
+ * / 10b (uncorrectable).  11b is only meaningful on parts like W25N04KV
+ * or W25W35Nxx (Linux mainline decodes it as 5-8 bit flips corrected);
+ * the W25N01GV datasheet defines it as reserved.  Since this port only
+ * trusts W25N01GV, a 11b pattern is rejected (fail closed) instead of
+ * being guessed: callers get SPINAND_RO_EIO and the status byte is
+ * printed for diagnostics.
+ *
  *   0  : no bit flips
  *   1  : bit flips corrected by the on-chip ECC
  *  -1  : uncorrectable
- *  -2  : reserved/invalid pattern
+ *  -2  : undefined/reserved pattern - treated as an error
  */
 static int spinand_decode_ecc(rt_uint8_t status)
 {
@@ -312,8 +341,13 @@ static int spinand_read_page_locked(rt_uint32_t page,
     if (spinand.pagebuf == RT_NULL)
         return SPINAND_RO_EIO;
 
-    if (spinand_load_page(page) != RT_EOK)
-        return SPINAND_RO_EIO;
+    {
+        int ret = spinand_load_page(page);
+        if (ret == -RT_ETIMEOUT)
+            return SPINAND_RO_ETIMEOUT;
+        if (ret != RT_EOK)
+            return SPINAND_RO_EIO;
+    }
 
     {
         int ret = spinand_wait_busy(&status);
@@ -332,7 +366,8 @@ static int spinand_read_page_locked(rt_uint32_t page,
     }
     if (ecc == -2)
     {
-        rt_kprintf("spinand: undefined ECC status 0x%02x\n", status);
+        rt_kprintf("spinand: undefined ECC status 0x%02x, refusing read\n",
+                   status);
         return SPINAND_RO_EIO;
     }
 
@@ -352,8 +387,13 @@ static int spinand_read_page_locked(rt_uint32_t page,
     if (nbytes > spinand.pagebuf_len)
         return SPINAND_RO_EIO;
 
-    if (spinand_read_cache(column, spinand.pagebuf, nbytes) != RT_EOK)
-        return SPINAND_RO_EIO;
+    {
+        int ret = spinand_read_cache(column, spinand.pagebuf, nbytes);
+        if (ret == -RT_ETIMEOUT)
+            return SPINAND_RO_ETIMEOUT;
+        if (ret != RT_EOK)
+            return SPINAND_RO_EIO;
+    }
 
     if (data != RT_NULL && data_len != 0)
         rt_memcpy(data, spinand.pagebuf, data_len);
@@ -479,6 +519,10 @@ static rt_err_t spinand_probe(void)
     rt_kprintf("spinand: %s, %u+%u B, %u pages/block, %u blocks\n",
                model->name, model->page_size, model->oob_size,
                model->pages_per_block, model->block_count);
+    rt_kprintf("spinand: geometry %s\n",
+               model->hw_verified
+                   ? "hardware-verified on this BSP"
+                   : "UNVERIFIED ( vendor table only, diagnostics only )");
 
     /* Only volatile configuration registers are touched.  No program,
      * erase, block lock or bad-block marker change is performed. */
@@ -575,6 +619,10 @@ static rt_err_t spinand_mtd_read_page(struct rt_mtd_nand_device *device,
         return -RT_MTD_EIO;
     if ((rt_uint32_t)page / device->pages_per_block >= device->block_total)
         return -RT_MTD_EIO;
+    /* Buffer sizes must fit the geometry; the driver stages through an
+     * internal page buffer, so oversized lengths cannot be honoured. */
+    if (data_len > device->page_size || spare_len > device->oob_size)
+        return -RT_MTD_EIO;
 
     abs_page = device->block_start * device->pages_per_block +
                (rt_uint32_t)page;
@@ -596,6 +644,7 @@ static rt_err_t spinand_mtd_read_page(struct rt_mtd_nand_device *device,
     case SPINAND_RO_ETIMEOUT:
         return RT_MTD_EBUSY;
     case SPINAND_RO_EINVAL:
+        return -RT_MTD_EIO;
     default:
         return RT_MTD_EIO;
     }
@@ -625,6 +674,8 @@ static rt_err_t spinand_mtd_check_block(struct rt_mtd_nand_device *device,
 
     if (ret == SPINAND_RO_EECC)
         return RT_MTD_EECC;
+    if (ret == SPINAND_RO_ETIMEOUT)
+        return RT_MTD_EBUSY;
     if (ret != SPINAND_RO_OK && ret != SPINAND_RO_ECC_OK)
         return RT_MTD_EIO;
 
@@ -713,7 +764,11 @@ static rt_err_t spinand_ro_dev_open(rt_device_t dev, rt_uint16_t oflag)
 static rt_err_t spinand_ro_dev_close(rt_device_t dev) { (void)dev; return RT_EOK; }
 static rt_err_t spinand_ro_dev_control(rt_device_t dev, int cmd, void *args)
 {
-    (void)dev; (void)cmd; (void)args; return RT_EOK;
+    /* All NAND access goes through rt_mtd_nand_*(); the generic device
+     * control entry must not report success for commands it cannot
+     * perform. */
+    (void)dev; (void)cmd; (void)args;
+    return -RT_ENOSYS;
 }
 
 static const struct rt_device_ops spinand_ro_device_ops =
@@ -743,6 +798,22 @@ static rt_err_t spinand_register_partitions(void)
         rt_kprintf("spinand: partitions not registered, chip geometry "
                    "does not match image_cfg.json\n");
         return -RT_EIO;
+    }
+
+    /*
+     * The partition layout in image_cfg.json is written for the
+     * hardware-verified geometry.  A different chip (different oob,
+     * block count or ECC decoder) must not be registered as a linear
+     * MTD partition set: the decode may still be in the raw table but
+     * its parameter sources disagree, so refuse loudly instead.
+     */
+    if (spinand.model == RT_NULL || !spinand.model->hw_verified)
+    {
+        rt_kprintf("spinand: partitions not registered, %s has no "
+                   "hardware-verified geometry (hw_verified=0); "
+                   "raw aic_nand_* diagnostics stay available\n",
+                   (spinand.model != RT_NULL) ? spinand.model->name : "chip");
+        return -RT_ENOSYS;
     }
 
     for (i = 0; i < SPINAND_PART_COUNT; i++)
@@ -892,8 +963,12 @@ rt_err_t aic_spinand_ro_check_block(rt_uint32_t block, rt_bool_t *bad)
                                    RT_NULL, 0, &marker, 1, &result);
     nand_unlock();
 
-    if (ret == SPINAND_RO_EECC)
+    /* An uncorrectable page means the bad-block marker itself is not
+     * readable: report an I/O failure instead of a verdict. */
+    if (ret == SPINAND_RO_EECC || ret == SPINAND_RO_EIO)
         return -RT_EIO;
+    if (ret == SPINAND_RO_ETIMEOUT)
+        return -RT_ETIMEOUT;
     if (ret != SPINAND_RO_OK && ret != SPINAND_RO_ECC_OK)
         return -RT_EIO;
 
@@ -957,17 +1032,52 @@ static rt_uint32_t nand_crc32(const rt_uint8_t *buf, rt_uint32_t len)
     return crc ^ 0xFFFFFFFFU;
 }
 
+/*
+ * Strict unsigned number parser for MSH arguments.
+ *   - accepts decimal or 0x/0X hex
+ *   - rejects sign characters, whitespace, trailing garbage
+ *   - rejects values that do not fit a rt_uint32_t
+ */
 static int nand_parse_u32(const char *text, rt_uint32_t *value)
 {
-    char *end = RT_NULL;
-    unsigned long val;
+    rt_uint64_t acc = 0;
+    rt_uint32_t base = 10;
+    int saw_digit = 0;
+    int overflow = 0;
 
-    if (text == RT_NULL || *text == '\0')
+    if (text == RT_NULL || value == RT_NULL)
         return -1;
-    val = strtoul(text, &end, 0);
-    if (end == RT_NULL || *end != '\0')
+
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+    {
+        base = 16;
+        text += 2;
+    }
+
+    for (; *text != '\0'; text++)
+    {
+        int digit;
+
+        if (*text >= '0' && *text <= '9')
+            digit = *text - '0';
+        else if (base == 16 && *text >= 'a' && *text <= 'f')
+            digit = *text - 'a' + 10;
+        else if (base == 16 && *text >= 'A' && *text <= 'F')
+            digit = *text - 'A' + 10;
+        else
+            return -1;      /* sign, whitespace or illegal character */
+
+        saw_digit = 1;
+        acc = acc * base + (rt_uint32_t)digit;
+        if (acc > 0xFFFFFFFFULL)
+        {
+            overflow = 1;   /* keep scanning so trailing garbage also errors */
+        }
+    }
+
+    if (!saw_digit || overflow)
         return -1;
-    *value = (rt_uint32_t)val;
+    *value = (rt_uint32_t)acc;
     return 0;
 }
 
@@ -1354,9 +1464,18 @@ MSH_CMD_EXPORT_ALIAS(aic_nand_read_part, aic_nand_read_part,
 
 static int rt_hw_spinand_ro_init(void)
 {
+    static rt_bool_t attempted = RT_FALSE;
     rt_err_t ret;
     rt_uint8_t pre_id[4] = {0};
-    int busy;
+    int attempt;
+
+    if (attempted)
+    {
+        rt_kprintf("spinand: init already attempted (%s)\n",
+                   spinand.ready ? "ready" : "failed, not retrying");
+        return spinand.ready ? RT_EOK : -RT_ERROR;
+    }
+    attempted = RT_TRUE;
 
     rt_memset(&spinand, 0, sizeof(spinand));
     if (rt_mutex_init(&spinand.lock, "spinand", RT_IPC_FLAG_PRIO) != RT_EOK)
@@ -1378,24 +1497,48 @@ static int rt_hw_spinand_ro_init(void)
     else
         rt_kprintf("spinand: pre-reset ID read failed\n");
 
-    /* The vendor sequence starts with a software reset. */
-    if (spinand_transfer(&cmd_reset, 0, RT_NULL, RT_NULL, 0) != RT_EOK)
-    {
-        rt_kprintf("spinand: reset command failed\n");
-        return -RT_ERROR;
-    }
-    busy = spinand_wait_busy(RT_NULL);
-    if (busy != RT_EOK)
+    /*
+     * The vendor sequence starts with a software reset.  A reset that
+     * fails to clear BUSY is retried once; a second failure aborts
+     * bring-up instead of registering a device that cannot answer.
+     */
+    for (attempt = 0; attempt < 2; attempt++)
     {
         rt_uint8_t sr = 0;
-        if (spinand_read_status_reg(&sr) == RT_EOK)
+        int busy;
+
+        if (attempt > 0)
+            rt_kprintf("spinand: reset retry %d\n", attempt);
+
+        if (spinand_transfer(&cmd_reset, 0, RT_NULL, RT_NULL, 0) != RT_EOK)
+        {
+            rt_kprintf("spinand: reset command failed\n");
+            continue;
+        }
+        busy = spinand_wait_busy(&sr);
+        if (busy == -RT_ETIMEOUT)
+        {
             rt_kprintf("spinand: reset busy timeout, STATUS=0x%02x\n", sr);
-        else
-            rt_kprintf("spinand: reset busy timeout and STATUS read failed\n");
-        rt_hw_qspi0_dump();
-        /* Continue: the ID/geometry/config checks below will report
-         * whether the device is actually usable. */
+            rt_hw_qspi0_dump();
+            continue;
+        }
+        if (busy != RT_EOK)
+        {
+            rt_kprintf("spinand: reset STATUS read failed\n");
+            continue;
+        }
+        /* 0xFF is the pattern a stuck/garbage read path produces; a valid
+         * idle STATUS (BUSY cleared) never looks like that. */
+        if (sr == 0xFF)
+        {
+            rt_kprintf("spinand: reset left STATUS=0xFF (read path suspect)\n");
+            continue;
+        }
+        rt_kprintf("spinand: reset ok, STATUS=0x%02x\n", sr);
+        break;
     }
+    if (attempt == 2)
+        return -RT_ERROR;
 
     ret = spinand_probe();
     if (ret != RT_EOK)
@@ -1405,7 +1548,8 @@ static int rt_hw_spinand_ro_init(void)
     if (ret != RT_EOK)
     {
         /* Raw access is still available for diagnostics. */
-        rt_kprintf("spinand: running without MTD partitions\n");
+        rt_kprintf("spinand: MTD partition registration FAILED (%d), "
+                   "continuing with raw reads only\n", ret);
     }
     return RT_EOK;
 }

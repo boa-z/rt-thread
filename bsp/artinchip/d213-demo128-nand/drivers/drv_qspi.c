@@ -458,14 +458,33 @@ static int qspi_transfer_sync(const rt_uint8_t *tx, rt_uint8_t *rx, rt_uint32_t 
     return ret;
 }
 
-static void qspi_hw_init(rt_uint32_t bus_hz)
+static int qspi_hw_init(rt_uint32_t bus_hz)
 {
     rt_uint32_t val;
+    int ret;
 
-    /* Controller reset: enable, master, stop on RX full, self-clearing reset. */
+    /*
+     * Controller reset: enable, master, stop on RX full, self-clearing
+     * reset that is expected to self-clear.
+     *
+     * The ArtInChip v1.0 HAL polls the same bit and on timeout only
+     * prints a warning, then carries on (qspi_hw_v1.0.h:
+     * "CFG_BIT_CTRL_RST not cleared after init_default"): on this
+     * silicon the reset bit does not always read back as cleared, but
+     * the controller is fully usable - 2026-11-06 real-board evidence:
+     * the poll times out (RT_ETIMEOUT=116) yet SPL/RT-Thread transfers
+     * of the same controller are healthy.  So a timeout here is
+     * reported, never fatal.
+     */
     qspi_write(QSPI_REG_CFG, CFG_CTRL_EN | CFG_CTRL_MODE_MASTER |
                               CFG_RXFULL_STOP | CFG_CTRL_RST);
-    qspi_poll_clear(QSPI_REG_CFG, CFG_CTRL_RST, 100000U);
+    ret = qspi_poll_clear(QSPI_REG_CFG, CFG_CTRL_RST, 100000U);
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("qspi0: WARNING controller reset not self-cleared "
+                   "(CFG=0x%08x), continuing\n",
+                   (unsigned int)qspi_read(QSPI_REG_CFG));
+    }
     qspi_set_bits(QSPI_REG_CFG, CFG_CTRL_EN | CFG_CTRL_MODE_MASTER);
 
     /* Mode 0, MSB first, CS active low and owned by software. */
@@ -478,7 +497,14 @@ static void qspi_hw_init(rt_uint32_t bus_hz)
     qspi_clr_bits(QSPI_REG_ICR, ISTS_ALL_MSK);
     qspi_write(QSPI_REG_ISTS, ISTS_ALL_MSK);
 
-    qspi_reset_fifo();
+    /* FIFO reset: same vendor semantics - poll, warn on timeout. */
+    ret = qspi_reset_fifo();
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("qspi0: WARNING fifo reset not self-cleared "
+                   "(FCTL=0x%08x), continuing\n",
+                   (unsigned int)qspi_read(QSPI_REG_FCTL));
+    }
     val = qspi_read(QSPI_REG_FCTL);
     val &= ~FCTL_WM_MASK;
     val |= AIC_QSPI_WATERMARK | (AIC_QSPI_WATERMARK << 16);
@@ -492,6 +518,7 @@ static void qspi_hw_init(rt_uint32_t bus_hz)
      * raw SCK edge reads 0xFF from the NAND and makes STATUS.BUSY stick.
      */
     qspi_clr_bits(QSPI_REG_TCFG, TCFG_RXINDLY_EN | TCFG_RXDLY_DIS);
+    return RT_EOK;
 }
 
 static rt_err_t qspi_configure(struct rt_spi_device *device,
@@ -706,7 +733,8 @@ void rt_hw_qspi0_dump(void)
 }
 
 rt_err_t rt_hw_qspi0_init(void)
-{    rt_err_t ret;
+{
+    int ret;
 
     if (aic_qspi0.registered)
         return RT_EOK;
@@ -716,10 +744,17 @@ rt_err_t rt_hw_qspi0_init(void)
     aic_qspi0.bus_hz = 0;
 
 #ifdef BSP_QSPI0_FREQ
-    qspi_hw_init((rt_uint32_t)BSP_QSPI0_FREQ);
+    ret = qspi_hw_init((rt_uint32_t)BSP_QSPI0_FREQ);
 #else
-    qspi_hw_init(24000000UL);
+    ret = qspi_hw_init(24000000UL);
 #endif
+    if (ret != RT_EOK)
+    {
+        /* Controller or FIFO reset timed out: leave the bus unregistered so
+         * callers fail loudly instead of talking to a dead controller. */
+        rt_kprintf("qspi0: controller init failed (%d), bus not registered\n", ret);
+        return ret;
+    }
 
     ret = rt_qspi_bus_register(&aic_qspi0.bus, "qspi0", &aic_qspi_ops);
     if (ret != RT_EOK)
