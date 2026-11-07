@@ -128,11 +128,12 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
 ```
 
 状态码：`PASS`、`DRY_RUN`、`UPGRADE_ENTRY_OK`、`BUILD_FAIL`、
-`PACKAGE_FAIL`、`IMAGE_MISSING`、`IMAGE_MISMATCH`、`RESOURCE_BUSY`、
-`SERIAL_BUSY`、`UPGRADE_ENTRY_FAIL`、`DEVICE_NOT_FOUND`、
-`DEVICE_AMBIGUOUS`、`FLASH_FAIL`、`FLASH_INTERRUPTED`、`BOOT_FAIL`、
-`BOOT_TIMEOUT`、`BUILD_ID_MISMATCH`、`TEST_FAIL`、`TEST_TIMEOUT`、
-`TEST_KNOWN_FAIL`、`AUTHORIZATION_REQUIRED`。
+`PACKAGE_FAIL`、`PROVENANCE_INDETERMINATE`、`IMAGE_MISSING`、
+`IMAGE_MISMATCH`、`RESOURCE_BUSY`、`SERIAL_BUSY`、
+`UPGRADE_ENTRY_FAIL`、`DEVICE_NOT_FOUND`、`DEVICE_AMBIGUOUS`、
+`FLASH_FAIL`、`FLASH_INTERRUPTED`、`BOOT_FAIL`、`BOOT_TIMEOUT`、
+`BUILD_ID_MISMATCH`、`TEST_FAIL`、`TEST_TIMEOUT`、`TEST_KNOWN_FAIL`、
+`AUTHORIZATION_REQUIRED`。
 
 安全边界：
 
@@ -141,6 +142,8 @@ python bsp\artinchip\tools\d213_hil.py --mode full `
 - 默认 `--flash-scope os` 使用 `--partition os`，只写 `image.target.os`；
   整包 `--flash-scope full` 才需要 `--confirm-full-flash`；
 - 烧录后必须通过 `aic_build_id` 与 manifest 的 Build ID 比对；
+- 构建前后 source tree（HEAD + `git status`）必须一致；构建期间源码
+  变化则中止烧录（`PROVENANCE_INDETERMINATE`）；
 - `artinchip-flash` 不要加 `--verbose`：日志 I/O 会拖慢 updater
   重新枚举的时序，导致重连超时；
 - 默认烧录尝试 1 次（最大 3 次），失败不自动重刷；

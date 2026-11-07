@@ -176,5 +176,49 @@ class ParseAicflashImageTest(unittest.TestCase):
                          ["image.target.env", "image.target.os"])
 
 
+class UtestMappingTest(unittest.TestCase):
+    def _run(self, rc, timeout=None):
+        old_run, old_stage = hil.run_logged, hil.stage
+        hil.run_logged = lambda *a, **k: (rc, timeout)
+        hil.stage = lambda *a, **k: None
+        args = type("Args", (), {
+            "port": "COM9", "baud": 115200, "utest_timeout": 20,
+            "suite": None, "known_fail": None})()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                return hil.run_utest(args, {}, tmp)
+        finally:
+            hil.run_logged, hil.stage = old_run, old_stage
+
+    def test_pass(self):
+        self.assertEqual(self._run(0), "PASS")
+
+    def test_known_fail(self):
+        self.assertEqual(self._run(2), "TEST_KNOWN_FAIL")
+
+    def test_test_fail(self):
+        self.assertEqual(self._run(1), "TEST_FAIL")
+
+    def test_timeout(self):
+        self.assertEqual(self._run(0, "timeout"), "TEST_TIMEOUT")
+
+
+class OpenConsoleTest(unittest.TestCase):
+    def test_missing_port_raises(self):
+        args = type("Args", (), {"port": "COM_DOES_NOT_EXIST",
+                                 "baud": 115200})()
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "serial.log")
+            with self.assertRaises(RuntimeError):
+                hil.open_console(args, log, timeout=0.3)
+
+
+class SourceStateTest(unittest.TestCase):
+    def test_returns_commit_and_status(self):
+        commit, status = hil.source_state()
+        self.assertEqual(len(commit), 40)
+        self.assertIsInstance(status, str)
+
+
 if __name__ == "__main__":
     unittest.main()

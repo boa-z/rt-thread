@@ -87,6 +87,11 @@ def git(*args):
         return "unknown"
 
 
+def source_state():
+    """Commit + working-tree state, to detect edits during a build."""
+    return (git("rev-parse", "HEAD"), git("status", "--porcelain"))
+
+
 def run_logged(cmd, log_path, timeout, cwd=None, env=None):
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         log.write("+ " + " ".join(cmd) + "\n")
@@ -177,8 +182,13 @@ class Console:
                        (self.port, self.baud,
                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         self.log.flush()
-        self.ser = serial.Serial(self.port, self.baud, timeout=0.1,
-                                 write_timeout=1)
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.1,
+                                     write_timeout=1)
+        except Exception:
+            self.log.close()
+            self.log = None
+            raise
 
     def close(self):
         try:
@@ -648,6 +658,7 @@ def main():
     if not build_lock.acquire():
         return finish("RESOURCE_BUSY", "build lock is held")
     locks.append(build_lock)
+    before = None if args.skip_build else source_state()
     if args.skip_build:
         stage(report, "build", "SKIP")
     else:
@@ -668,6 +679,9 @@ def main():
             if "package=FAIL" in text:
                 return finish("PACKAGE_FAIL", "static check passed but packaging failed")
             return finish("BUILD_FAIL", "build/check failed")
+        if source_state() != before:
+            return finish("PROVENANCE_INDETERMINATE",
+                          "source tree changed during the build")
         stage(report, "build", "PASS",
               log=os.path.join(report_dir, "build.log"))
 
