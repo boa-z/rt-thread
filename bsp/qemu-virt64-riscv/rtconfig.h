@@ -102,6 +102,7 @@
 #define RT_DEBUGING_ASSERT
 #define RT_DEBUGING_COLOR
 #define RT_DEBUGING_CONTEXT
+#define RT_USING_CI_ACTION
 
 /* Inter-Thread communication */
 
@@ -364,6 +365,11 @@
 
 /* Utilities */
 
+#define RT_USING_UTEST
+#define UTEST_THR_STACK_SIZE 8192
+#define UTEST_THR_PRIORITY 20
+#define RT_UTEST_USING_AUTO_RUN
+#define RT_UTEST_MAX_OPTIONS 64
 #define RT_USING_RESOURCE_ID
 #define RT_USING_ADT
 #define RT_USING_ADT_AVL
@@ -446,6 +452,9 @@
 
 /* LVGL: powerful and easy-to-use embedded GUI library */
 
+
+/* GD32EmbeddedUI demos require LVGL v8.3.11 */
+
 /* end of LVGL: powerful and easy-to-use embedded GUI library */
 
 /* u8g2: a monochrome graphic library */
@@ -524,6 +533,10 @@
 
 /* end of HPMicro SDK */
 
+/* FM33 Drivers */
+
+/* end of FM33 Drivers */
+
 /* FT32 HAL & SDK Drivers */
 
 /* end of FT32 HAL & SDK Drivers */
@@ -531,6 +544,10 @@
 /* NOVOSNS Drivers */
 
 /* end of NOVOSNS Drivers */
+
+/* N32 Drivers */
+
+/* end of N32 Drivers */
 /* end of HAL & SDK Drivers */
 
 /* sensors drivers */

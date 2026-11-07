@@ -7,4 +7,11 @@ group = DefineGroup('RVV utestcases', src,
                     depend = ['RT_USING_UTEST', 'ENABLE_VECTOR', 'RT_USING_HEAP'],
                     CPPPATH = [cwd])
 
+src_fpu = ['fpu_context_tc.c', 'fpu_context_gcc.S']
+
+group = group + DefineGroup('FPU utestcases', src_fpu,
+                            depend = ['RT_USING_UTEST', 'ARCH_RISCV_FPU_D',
+                                      'ARCH_RISCV64', 'RT_USING_HEAP'],
+                            CPPPATH = [cwd])
+
 Return('group')
