@@ -105,9 +105,17 @@ CS deassert
 1. `aic_board_sysclk_init()` 打开 QSPI0 总线/模块门控并释放复位；
 2. `aic_board_pinmux_init()` 配置 PB.0~PB.5 为功能 3；
 3. `rt_hw_qspi0_init()`（`INIT_DEVICE_EXPORT`，幂等）：
-   - 控制器复位（`CFG.CTRL_RST`，轮询自清零）；
+   - 控制器复位（`CFG.CTRL_RST`，轮询自清零）。
+     **轮询超时只警告不终止**：ArtInChip v1.0 HAL 对同一位就是
+     `readl_poll_timeout + pr_warn` 后继续
+     （`qspi_hw_v1.0.h` "CFG_BIT_CTRL_RST not cleared after ..."），
+     实机（2026-11-06 第二轮）也确认该位在这片硅片上经常不自清，
+     但控制器功能完全正常（同一启动里 SPL 用同一控制器完成
+     183496 B 读并 CRC 校验通过）。本轮曾把它当成致命错误而拒绝
+     注册总线，实机复现失败后按 HAL 语义改回警告并继续；
    - 主机模式、Mode 0、MSB、软件 CS、低有效、TX delay、DINVD；
-   - 关闭所有中断、清 `ISTS`、复位 FIFO、设置水位；
+   - 关闭所有中断、清 `ISTS`、复位 FIFO（同样超时警告不终止）、
+     设置水位；
    - 写 CCFG 分频；RX 采样使用与原厂
      `AIC_DEV_QSPI0_DELAY_MODE=2` 一致的**半周期**模式；
 4. 注册总线 `qspi0`，打印基址/输入时钟/请求频率/实际频率及 CMU 寄存器。
@@ -141,30 +149,48 @@ GET_FEATURE/SET_FEATURE（配置寄存器）。详细日志见 12.9。
 ### 12.5.1 支持芯片
 
 驱动不根据原厂配置假定型号。启动时读取 4 字节 JEDEC ID，并与下表匹配；
-未知 ID 直接报错，不猜测几何参数：
+未知 ID 直接报错，不猜测几何参数。**只有 `hw_verified=1` 的型号允许注册
+MTD 分区**；其余型号仅保留原始物理页只读诊断（`aic_nand_*`），
+不注册分区、不提供 MTD 语义：
 
-| JEDEC ID | 型号 | Page+OOB | Page/Block | Block 数 | 片内 ECC |
-|---|---|---|---|---|---|
-| `EF AA 21` | W25N01GV | 2048+64 | 64 | 1024 | 1 bit/512B |
-| `EF AE 21` | W25N01KV | 2048+64 | 64 | 1024 | 4 bit/512B |
-| `EF AA 22` | W25N02KV | 2048+128 | 64 | 2048 | 1 bit/512B |
-| `EF BA 22` | W25N02KW | 2048+128 | 64 | 1024 | 1 bit/512B |
-| `EF BF 22` | W25N02JW | 2048+64 | 64 | 2048 | 1 bit/512B |
+| JEDEC ID | 型号 | Page+OOB | Page/Block | Block 数 | 片内 ECC | 硬件验证 |
+|---|---|---|---|---|---|---|
+| `EF AA 21` | W25N01GV | 2048+64 | 64 | 1024 | 1 bit/512B | **=1（本 BSP 实机）** |
+| `EF AE 21` | W25N01KV | 2048+64 | 64 | 1024 | 4 bit/512B | =0 |
+| `EF AA 22` | W25N02KV | 2048+128 | 64 | 2048 | 1 bit/512B | =0 |
+| `EF BA 22` | W25N02KW | 2048+128 | 64 | 1024 | 1 bit/512B | =0 |
+| `EF BF 22` | W25N02JW | 2048+64 | 64 | 2048 | 1 bit/512B | =0 |
+
+参数来源为原厂 Luban-Lite `bsp/peripheral/spinand/winbond.c`，并与 Linux
+主线 `drivers/mtd/nand/spi/winbond.c` 交叉核对。核查后存在无法裁决的
+**参数冲突**，这是未验证型号拒绝注册分区的原因（不猜测、不裁决）：
+
+| 型号 | 冲突项 | Luban-Lite | Linux 主线 |
+|---|---|---|---|
+| W25N01KV | OOB 大小 | 64 B | 96 B |
+| W25N02KV | ECC 强度 | 1 bit/512B | 8 bit/512B |
+| W25N02KW | Block 数 | 1024 | 2048 |
+
+此前审查提出的"直接采用 Linux 参数替换"**不予采纳**：三处冲突在两份
+来源里方向相反，没有 datasheet 佐证前无法确定哪份正确。后续若要启用
+某个未验证型号，必须按其 datasheet 逐项核对参数并在芯片级验证通过后
+把 `hw_verified` 置 1。
 
 D213 demo128 的 image_cfg 几何为 2 KiB Page / 128 KiB Block / 64 B OOB，
 对应 128 MiB 型号。驱动会把识别结果与构建期生成的
-`SPINAND_CFG_*` 常量比较；不一致时打印警告并**拒绝注册分区**，但仍保留
-原始物理 Page 只读能力用于诊断。
+`SPINAND_CFG_*` 常量比较；不一致时打印警告并**拒绝注册分区**；未验证
+型号（`hw_verified=0`）也直接拒绝注册并打印原因，但仍保留原始物理
+Page 只读能力用于诊断。
 
 ### 12.5.2 初始化
 
 ```text
-RESET (0xFF) + 等待 BUSY 清零
-READ ID (0x9F, 4 bytes)
+READ ID (0x9F, 4 bytes)        ← 复位前先读，便于区分链路/复位问题
+RESET (0xFF) + 等待 BUSY 清零   ← 最多两次，成功后校验 STATUS 合法
 匹配型号表
 GET_FEATURE CFG (0xB0)
 SET_FEATURE CFG: 置 BUF_READ + ECC_ENABLE
-GET_FEATURE CFG/STATUS 回读并打印
+GET_FEATURE CFG/STATUS 回读并打印   ← CFG 未置位判失败
 分配 page + oob 内部缓冲
 ```
 
@@ -174,22 +200,41 @@ GET_FEATURE CFG/STATUS 回读并打印
 - 不使能 Quad（`CFG.QUAD_ENABLE`）：第一阶段固定单线数据阶段；
 - 不启用 SPIENC、不做 BBT 扫描和持久化。
 
+**复位严格化（新增）**：一次 RESET 后 `wait_busy` 超时、STATUS 读失败或
+读回 `0xFF`（读链路异常的典型值）都算复位未完成，允许整体重试一次；
+两次都失败则初始化直接失败（`-RT_ERROR`），**不再静默跳过、也不会注册
+看似正常的设备**。重复调用 `rt_hw_spinand_ro_init()` 会被首末状态拒绝，
+不会重复初始化互斥锁或重新 attach。
+
+**初始化失败路径**：spinand attach/复位/probe 失败时不会调用分区注册，
+即 MTD 全部为未注册状态，`aic_nand_*` 诊断命令仅报告"未初始化"。
+QSPI 侧的复位/FIFO 轮询超时**不是**失败路径（原厂 HAL 语义为警告并
+继续，见 12.4.2）；`rt_hw_qspi0_init()` 仍保留失败短路逻辑作为防御，
+总线注册失败时 NAND 初始化即失败。
+
 除上述 CFG 配置位外，驱动不修改任何 NAND 内容。
 
 ### 12.5.3 Page 读取与 ECC
 
 ```text
-PAGE_READ (0x13, 3-byte page)
+PAGE_READ (0x13, 3-byte page)      ← 命令地址 = 原始页号（row = page），
+                                       与原厂 spinand.c 及 Linux 主线一致
   → 轮询 STATUS.BUSY，超时 30000 × 1 µs
   → 解码 STATUS[5:4]
        00 = 无位翻转
        01 = 已纠错（数据有效）
-       10 = 不可纠错（数据无效）
-       11 = 保留/异常（按错误处理）
+       10 = 不可纠错（数据无效，fail closed）
+       11 = 两份来源解码结论冲突（Luban-Lite 对部分 W25N04 系按
+            "已纠 5-8 位"处理、W25N01GV datasheet 定义为保留）；
+            本驱动仅信任 W25N01GV，统一按错误拒绝并打印状态字节
   → READ FROM CACHE (0x03, 2-byte column, 8 dummy cycles)
        column=0            : 主区，可附加 OOB
        column=page_size    : 纯 OOB
 ```
+
+页加载（`PAGE_READ`）与缓存读取（`READ FROM CACHE`）两步的 QSPI 超时
+`-RT_ETIMEOUT` 都会透传为 `SPINAND_RO_ETIMEOUT`，与传输失败
+（`SPINAND_RO_EIO`）分开上报。
 
 返回语义：
 
@@ -198,11 +243,14 @@ PAGE_READ (0x13, 3-byte page)
 | 正常 | `SPINAND_RO_OK` | `RT_MTD_EOK` |
 | ECC 已纠错 | `SPINAND_RO_ECC_OK` | `RT_MTD_EECC_CORRECT` |
 | 不可纠错 | `SPINAND_RO_EECC` | `RT_MTD_EECC` |
-| 忙超时 | `SPINAND_RO_ETIMEOUT` | `RT_MTD_EBUSY` |
-| 传输/参数错误 | `SPINAND_RO_EIO/EINVAL` | `RT_MTD_EIO` |
+| 忙/传输超时 | `SPINAND_RO_ETIMEOUT` | `RT_MTD_EBUSY` |
+| 传输失败 | `SPINAND_RO_EIO` | `RT_MTD_EIO` |
+| 参数/越界错误 | `SPINAND_RO_EINVAL` | `-RT_MTD_EIO`（负值） |
 
 **不会静默忽略 ECC 错误**：不可纠错时不返回页数据；已纠错时通过
-`RT_MTD_EECC_CORRECT` 明确上报。
+`RT_MTD_EECC_CORRECT` 明确上报。参数/边界错误按树内惯例返回**负的**
+`-RT_MTD_EIO`（对照 `bsp/nuvoton/libraries/nu_packages/SPINAND` 的
+在树驱动写法），与传输失败（正值 `RT_MTD_EIO`）区分。
 
 ### 12.5.4 坏块只读检查
 
@@ -251,7 +299,8 @@ OOB map、bitflip 回调）塞进上游结构体。
   - 通用 `rt_device_read()` 返回 `-RT_ENOSYS`（防止把“返回 length”
     误判为页读取成功）；
   - 通用 `rt_device_write()` 返回 `-RT_EPERM`；
-  - 读写 NAND 必须走 `rt_mtd_nand_read()` 等 MTD API；
+  - 通用 `rt_device_control()` 返回 `-RT_ENOSYS`：所有 NAND 访问必须走
+    `rt_mtd_nand_read()` 等 MTD API，未知命令不得伪装成功；
 - 不注册 `rt_blk_nand` 块设备；
 - 不挂载任何文件系统；
 - MSH 命令不提供任何写/擦/修复入口。
@@ -392,24 +441,64 @@ scons -j8
 - `read_page`：`page < block_count × pages_per_block`；
 - `check_block`：`block < block_count`；
 - `read_part`：只接受已注册的线性分区；`offset + length ≤ 分区大小`；
-- 所有参数都做完整解析和范围检查，失败打印具体错误。
+- 所有参数都做完整解析和范围检查，失败打印具体错误；
+- 数值解析（`nand_parse_u32`）为手写严格解析：只接受十进制或 `0x/0X`
+  十六进制，**拒绝正负号、空白、尾随非法字符和超出 32 位范围的值**
+  （此前用 `strtoul` 会把负数/前导空白/截断值静默转换成错误的大数）。
 
 启动日志示例（硬件实测后应替换为真实输出）：
 
 ```text
 qspi0: registered, base=0x10400000 sclk=100000000 Hz requested=24000000 Hz actual=16666666 Hz cmu=0x........
+spinand: pre-reset ID EF AA 21 00
+spinand: reset ok, STATUS=0x00
 spinand: JEDEC ID EF AA 21 FF
 spinand: W25N01GV, 2048+64 B, 64 pages/block, 1024 blocks
+spinand: geometry hardware-verified on this BSP
 spinand: CFG=0x18 STATUS=0x00
 spinand: 8 linear MTD partition(s) registered, read-only
 ```
 
 `CFG=0x18` 表示 BUF_READ(bit3) + ECC_ENABLE(bit4) 已置位；
-`STATUS=0x00` 表示空闲、无 ECC 事件。
+`STATUS=0x00` 表示空闲、无 ECC 事件。复位两次失败时将打印
+`spinand: reset busy timeout` / `reset command failed`，并直接以
+`-RT_ERROR` 结束初始化、不注册 MTD；未验证型号会打印
+`geometry UNVERIFIED` 且分区不注册。
 
 ## 12.10 测试与验证
 
 ### 12.10.1 已执行（BUILD / STATIC / HOST）
+
+#### 2026-11-06 第二轮（可靠性修复后回归）
+
+| 项目 | 结果 | 说明 |
+|---|---|---|
+| `d213-minimal` clean build + ELF/map | PASS | 无回归 |
+| `d213-default` clean build + ELF/map | PASS | 无回归 |
+| `d213-utest` clean build + ELF/map | PASS | 含 `bsp.d213.spinand.ro` 与 10 个 `_utest_testcase` 符号 |
+| `d213-nand-readonly` clean build + ELF/map | PASS | QSPI/NAND/MTD + 分区生成 |
+| `d126-minimal` clean build + ELF/map | PASS | 无回归 |
+| 实机（d213-utest 固件） | **HW FAIL（已定位并修复）** | `CFG.CTRL_RST` 不自清被误判为致命；按原厂 HAL 语义改为警告并继续，复测 PENDING |
+| `tools/test_nand_parts.py -v` | 4/4 PASS | 布局、对齐、越界、头文件生成 |
+
+本轮代码改动：`drv_qspi.c`（复位/FIFO 超时检查：发现即报告，但按
+原厂 HAL 语义不终止初始化；失败不注册总线的短路保留）、
+`drv_spinand.c`（错误码区分/hw_verified 门控/复位严格化/严格参数解析/
+`control` 返回 `-RT_ENOSYS`）、`utest/tc_spinand_ro.c`（缺设备即 FAIL、
+分区一致性与 FIT 魔数用例）。构建命令：
+
+```sh
+$env:RTT_EXEC_PATH = '<SDK>\toolchain\bin'
+python bsp/artinchip/tools/build-check.py --sdk <SDK> \
+    --targets d213-minimal d213-default d213-utest d213-nand-readonly d126-minimal
+python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
+```
+
+注意：`RTT_EXEC_PATH` 必须指向**工具链的 bin 目录**（含
+`riscv64-unknown-elf-gcc.exe`），上级目录会触发 `building.py` 的
+"无效工具链路径，删除 RTT_EXEC_PATH" 分支并失败。
+
+#### 2026-11-06 第一轮（可靠性修复前基线）
 
 | 项目 | 结果 | 说明 |
 |---|---|---|
@@ -420,14 +509,6 @@ spinand: 8 linear MTD partition(s) registered, read-only
 | `d126-minimal` clean build + ELF/map | PASS | 共享检查脚本路径分隔符修复后通过 |
 | `tools/test_nand_parts.py` | 4/4 PASS | 布局、对齐、越界、头文件生成 |
 | `tools/gen_nand_parts.py --check` | PASS | 128 MiB / 1024 block / 10 分区 |
-
-构建命令：
-
-```sh
-python bsp/artinchip/tools/build-check.py \
-    --targets d213-minimal d213-default d213-utest d213-nand-readonly d126-minimal
-python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
-```
 
 ### 12.10.2 硬件验收步骤
 
@@ -459,13 +540,89 @@ python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
 
 #### 剩余验收项（仍 PENDING）
 
-1. `aic_nand_read_page` 手工读样页并核对 ECC/OOB 输出；
-2. `aic_nand_check_block` 抽查 `spl`/`os` 等多个块，记录坏块分布；
-3. `aic_nand_partitions`：坏块计数、`os` FIT 检测结果；
-4. `aic_nand_read_part os 0 8`：magic 与 `aic_nand_partitions` 一致；
-5. 冷启动、热重启各 ≥ 5 次，NAND 读取不改变启动结果；
-6. 确认 UART、tick、CAN、显示在含 NAND 的配置下仍正常；
-7. 用逻辑分析仪抽查全程无 Program/Erase/Refresh 命令。
+##### 2026-11-06 第二轮实机结果（固件 `d213-utest`，修复前）
+
+烧录第二轮 `d213-utest` 固件，启动正常（SPL 用同一 QSPI0 完成
+183496 B 读并 CRC 通过），但 RT-Thread 中出现：
+
+```text
+qspi0: controller init failed (-116), bus not registered
+qspi0: controller init failed (-116), bus not registered
+spinand: qspi0 init failed (-116)
+```
+
+根因：`CFG.CTRL_RST` 在这片硅片上经常不自清（原厂 HAL 对同一位
+轮询超时后仅 `pr_warn` 并继续，见 12.4.2）；本轮新增的"复位超时
+即失败"检查过于严格，把健康控制器误判为死设备（`-116` =
+`-RT_ETIMEOUT`，ETIMEDOUT=116 属 libc 错误码段）。
+
+处理：`qspi_hw_init()` 改回原厂语义——轮询超时打印
+`WARNING ... not self-cleared (CFG=0x%08x)` 后继续；签收该项为
+**HW FAIL（修复）**，修复后固件复测 **PENDING**。
+
+##### 2026-11-06 实机复测（修复后固件，实机日志）
+
+烧录复位修复后的固件，实机启动日志（真实输出）：
+
+```text
+qspi0: registered, base=0x10400000 sclk=100000000 Hz requested=24000000 Hz actual=16666666 Hz cmu=0x00003105
+spinand: pre-reset ID EF AA 21 00
+spinand: reset ok, STATUS=0x00
+spinand: JEDEC ID EF AA 21 00
+spinand: W25N01GV, 2048+64 B, 64 pages/block, 1024 blocks
+spinand: geometry hardware-verified on this BSP
+spinand: CFG=0x19 STATUS=0x00
+spinand: 8 linear MTD partition(s) registered, read-only
+```
+
+**HW PASS（初始化链路）**：QSPI0 注册成功、严格化复位成功一次即过
+（`reset ok, STATUS=0x00` 是本轮新增的复位状态校验输出）、JEDEC/
+几何/CFG/8 分区全部正常。注意：本次启动 CFG Reset 位自清成功
+（未出现 WARNING），说明该位是否自清是**间歇性行为**，警告并继续
+的语义是必要的。MSH/utest 各项仍为 PENDING（剩余项见下）。
+
+##### 实机命令与期望值
+
+实机命令与**本期计算出的期望值**（基于
+`artifacts/d213-nand-readonly/images/d21x_os.itb`，88064 B 有效内容、
+后续补零；坏块映射未知的限制见 12.7.3——若 Bootloader 不跳块烧写，
+下列期望成立，若烧写工具跳过坏块，则需按实际块分布修正）：
+
+1. `aic_nand_read_page 768`（`os` 起始物理页 = block 12 × 64）：
+   - ECC 结果应为 clean（或 corrected）；
+   - data 前 8 字节应为
+     `d0 0d fe ed 00 00 02 d9`（FIT magic `0xD00DFEED`、
+     totalsize 729 = FDT 头值，镜像已补零对齐；totalsize 不等于
+     文件长度属正常现象）。
+2. `aic_nand_read_part os 0 8`：与上一致；再加
+   `aic_nand_read_part os 0 4096`：比对 CRC32。**CRC 期望值必须用
+   实际烧录的那份 `d21x_os.itb` 现算**（例如 QSPI 复位修复后的
+   本轮产物 90112 B，CRC = `0x818211a9`；此前两轮镜像分别为
+   `0xde1e543a`/`0x6ee89a4a`，镜像大小与填充都会影响该值）：
+   `python <repo>/fit_check.py artifacts/d213-nand-readonly/images/d21x_os.itb`
+   （或用任意 zlib.crc32 工具）。
+   magic/totalsize 与镜像内容弱相关，一般稳定；CRC 强相关，
+   每次重新打包后都要更新期望值。
+3. `aic_nand_partitions`：10 分区边界/spl 0-7/env 8-9/env_r 10-11/os
+   12-43/os_r 44-75/rodata 76-171/rodata_r 172-267/data 268-587/
+   data_r 588-907/refresh 908-915；8 个 MTD；`os` 行应显示
+   FIT 识别（magic `0xD00DFEED` totalsize 729）。
+4. `aic_nand_check_block 0` / `12`：期望 good；如 `os` 起始 12 个块
+   内存在坏块且 Bootloader 跳过坏块烧写，FIT 探测会偏移——记录实际
+   坏块分布再解读，不要臆断映射算法。
+5.非法参数回归：`aic_nand_read_page 1024` / `aic_nand_check_block 1024` /
+   `aic_nand_read_part os 0x400000 8` / `aic_read_page -1` /
+   `aic_read_page 0x100000000` / 带尾随垃圾（如 `768x`）全部拒收；
+   `aic_read_part os 0 0` 拒收（length=0）。
+6. 写/擦/移动/标坏拒绝（utest 已断言；MSH 无写入口）。
+7. 100 次复读（utest 已含；单测统计 clean/corrected 数）。
+8. 冷启动、热重启各 ≥ 5 次，NAND 读取不改变启动结果；
+   `spinand: reset ok`、`8 linear MTD partition(s) registered` 每次都在。
+9. 确认 UART、tick、CAN、显示在含 NAND 的配置下仍正常。
+10. 用逻辑分析仪抽查全程无 Program/Erase/Refresh 命令。
+
+当前代码、构建与静态检查全部完成；以上实机步骤未执行，全部为
+**HW PENDING**，没有编造任何日志。
 
 ### 12.10.3 结果分级
 
@@ -473,8 +630,10 @@ python bsp/artinchip/d213-demo128-nand/tools/test_nand_parts.py -v
 
 `BUILD / STATIC / HOST / HW / PENDING / FAIL`
 
-当前结论：**BUILD + STATIC + HOST PASS；核心读取链路 HW PASS
-（2026-11-06，W25N01GV）；剩余验收项 PENDING**（见 12.10.2）。
+当前结论：**BUILD + STATIC + HOST PASS（两轮，2026-11-06）；核心读取链路
+HW PASS（2026-11-06 第一轮，W25N01GV）；第二轮实机发现可靠性检查
+过度严格（复位位不自清被误判为致命），已修复并待复测
+HW PENDING**（见 12.10.2）。
 
 ## 12.11 风险与限制
 

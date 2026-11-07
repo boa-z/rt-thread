@@ -120,6 +120,43 @@ msh > aic_selftest
 
 如果失败，先确认 `RT_TICK_PER_SECOND`、线程优先级和栈大小没有被改坏。
 
+### SPI NAND 只读 utest（`bsp.d213.spinand.ro`）
+
+```text
+msh > utest_run -thread bsp.d213.spinand.ro
+```
+
+结果语义（防假通过，2026-11-06 重写：
+
+- 用例只在 `BSP_USING_SPINAND_MTD_NAND=y` 时编译进固件；整个用例
+  "静默缺失" 等价于配置未开，不属于测试套件通过与否；
+- 在已启用的构建中，**NAND 未初始化、`os` 等 MTD 分区缺失、页读取
+  失败一律 FAIL，不再 SKIP**；
+- 单元用例：
+
+| 用例 | 断言 |
+|---|---|
+| `tc_spinand_info` | 设备就绪、JEDEC/几何合法 |
+| `tc_spinand_partitions` | 8 个线性 MTD 与 image_cfg 一致；`data/data_r` 不出现 MTD 设备 |
+| `tc_spinand_fit_probe` | `os` 页 0 magic `0xD00DFEED`、totalsize 合法 |
+| `tc_spinand_check_block` | 物理块 0 与 `os` 起始块可读且结论只有 good/-RT_ERROR |
+| `tc_spinand_repeat_read` | `os` 页 0 连续 100 次读取一致；打印 clean/corrected 统计 |
+| `tc_spinand_bounds` | 越界页/块/超长 buffer 拒绝（`-RT_MTD_EIO`） |
+| `tc_spinand_write_rejected` | 写/擦/移动/标坏 `-RT_EPERM`；generic read `-RT_ENOSYS`、write `-RT_EPERM`、control `-RT_ENOSYS` |
+
+常见失败与处理：
+
+| 现象 | 指向 |
+|---|---|
+| `qspi0: controller init failed (-116), bus not registered` | 修复前构建的组合："复位不自清" 被当作致命错误。`-116`=`-RT_ETIMEOUT`（ETIMEDOUT）；原厂 HAL 对该位超时是警告并继续（见 12-storage 12.4.2），控制器功能正常。用修复后固件即可恢复；若仍失败才需要查时钟/引脚 |
+| `qspi0: WARNING controller reset not self-cleared` | 预期内的警告（硅片行为），继续注册总线，可忽略 |
+| `SPI NAND is NOT initialised` | 看启动日志 `spinand: reset ...`：复位两次失败会直接终止初始化（不注册设备），伴随 `rt_hw_qspi0_dump` 输出；检查 QSPI0 频率/引脚/电源 |
+| `JEDEC ID FF FF FF FF`/`00 00 00 00` | 读链路问题：非 MSB 模式或 RX 采样沿错误都会重现，`TCFG=0x41c0` 应保持 |
+| `configuration did not stick` | CFG 写入未生效：检查 SET_FEATURE 命令与 BUSY 状态 |
+| `linear MTD device 'os' missing` | 分区未注册：看 `spinand: MTD partition registration FAILED` 或 geometry 与 image_cfg 不匹配警告 |
+| `os FIT magic` 断言失败 | 页寻址/映射错误：核对分区起始块 12×64 页=768；若 Bootloader 跳过坏块烧写，先记录坏块分布（见 12-storage 12.7.3），不要臆断映射 |
+| 越界用例 FAIL | 驱动边界检查被削弱，回滚驱动改动 |
+
 ## 17.3 外设测试入口
 
 以下外设命令需要先在 `scons --menuconfig` 中启用对应外设；默认 `.config` 包含 UART0、显示/GE 和 GT911 触摸测试命令。
