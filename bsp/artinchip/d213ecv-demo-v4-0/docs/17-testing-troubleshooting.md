@@ -1,0 +1,626 @@
+# 17 测试与问题排查
+
+> 正式的 utest 测试固件、P0/P1/P2 用例和主机侧串口脚本见
+> [22-utest-regression.md](22-utest-regression.md)。本章保留 MSH 手工测试和
+> 外设排障步骤。
+
+## 17.1 测试状态说明
+
+本仓库当前能提供的证据：
+
+- 默认 `.config` 编译通过；
+- 链接映射和符号检查；
+- FIT/ITB/IMG 打包成功；
+- LVDS 彩条、双缓冲、VSync、GE FillRect/BitBlt 实机日志；
+- d213-utest 与 HIL 全流程回归日志（`bsp/artinchip/artifacts/d213-hil/`，
+  如 `20261108-092325-14520`）。
+
+当前不能提供的证据：
+
+- GPIO/PWM 的外部负载/示波器波形，CAN 外部总线日志；
+- WDT 复位等破坏性或未执行的实机项；
+- 新 `lvgl-aic-standalone` 镜像的实机上屏日志；
+- 压力测试和错误注入结果。
+
+任何“通过”都必须注明是编译、静态还是实机。
+
+### 参考构建记录
+
+默认配置（UART0/1、GPIO、I2C3、CAN0/1、PWM、WDT、RTC、LVDS/DE、双缓冲、GE），
+Homebrew GCC 16.1.0、Newlib 4.6.0、Python 3.13、SCons 4.8.1：
+
+| 配置 | text | data | bss | 合计 |
+|---|---:|---:|---:|---:|
+| `configs/d213-minimal.config` | 63760 | 1056 | 14536 | 79352 |
+| `configs/d213-default.config` | 113752 | 4360 | 15720 | 133832 |
+| 默认 + lvgl-aic-standalone 软件路径 | 本次迁移未重建 | - | - | - |
+
+打包结果：
+
+| 配置 | `rtthread.bin` | `d21x_os.itb` | 最终 `.img` |
+|---|---:|---:|---:|
+| minimal | 65056 | 67584 | 916992 |
+| 默认 `.config`（含 GT911） | 118280 | 120832 | 970240 |
+
+最终 `.img` 包含 Bootloader/ENV/PBP，具体大小随 SDK 资产变化。
+
+### 跨平台打包验证
+
+macOS Apple Silicon（Python 3.13 + uv venv）已执行：
+
+```sh
+AIC_SDK_DIR=/path/to/luban-lite \
+    python tools/mk_firmware.py --elf rtthread.elf --out images
+```
+
+检查结果：
+
+- `d21x_os.itb` 大小为 120832，FDT magic 为 `d0 0d fe ed`；
+- 最终 `.img` 大小为 970240，头 8 字节为 `AIC.FW\0\0`；
+- `bootloader.aic` == `pbp_ext.aic` + `loader.aic`，未改写原厂 Bootloader；
+- `env.bin` 为 4096 字节，冗余标志为 1，CRC32 正确；
+- 纯 Python `mkenvimage.py` 输出与系统原生 U-Boot `mkenvimage` 逐字节一致。
+
+SDK 工具层测试：
+
+```sh
+cd "$AIC_SDK_DIR/tools/scripts"
+python -m unittest discover -s tests -v
+```
+
+测试只验证打包，不进行烧录或硬件启动验证。
+
+Xuantie GCC 10.2.0（V2.6.1）也可构建同一源码：
+`text=103304, data=5856, bss=10800, rtthread.bin=109160`。
+
+这些数字只证明构建和链接成功，不证明外设功能。
+
+## 17.2 基础 BSP 自检
+
+### 启动日志（目录重组前参考）
+
+```text
+spl read: 46648 byte
+CRC32 verify OK.
+...
+RT-Thread 5.4.0
+ArtInChip D213 demo128 RT-Thread BSP
+CPU: T-Head C906 (RV64GC), tick: 1000 Hz
+worker1: fp result=526
+worker2: fp result=528
+selftest: counter=2000 (expected 2000), ticks=5
+main: running
+msh >
+```
+
+这证明：
+
+- FIT 段加载/入口正确；
+- UART0 输出；
+- Tick 工作；
+- 两线程切换；
+- 互斥量/信号量；
+- FPU 算术；
+- FinSH 可用。
+
+重组后的实机启动日志见 HIL 报告；历史 `fpu context` 失败已由官方修复，当前基线待实机复测（22.6）。
+
+### `aic_selftest`
+
+```text
+msh > aic_selftest
+```
+
+检查项：
+
+- 计数线程是否达到预期；
+- Tick 是否推进；
+- FPU 结果；
+- 互斥量/信号量是否死锁。
+
+如果失败，先确认 `RT_TICK_PER_SECOND`、线程优先级和栈大小没有被改坏。
+
+### SPI NAND 只读 utest（`bsp.d213.spinand.ro`）
+
+```text
+msh > utest_run -thread bsp.d213.spinand.ro
+```
+
+结果语义（防假通过，2026-11-06 重写：
+
+- 用例只在 `BSP_USING_SPINAND_MTD_NAND=y` 时编译进固件；整个用例
+  "静默缺失" 等价于配置未开，不属于测试套件通过与否；
+- 在已启用的构建中，**NAND 未初始化、`os` 等 MTD 分区缺失、页读取
+  失败一律 FAIL，不再 SKIP**；
+- 单元用例：
+
+| 用例 | 断言 |
+|---|---|
+| `tc_spinand_info` | 设备就绪、JEDEC/几何合法 |
+| `tc_spinand_partitions` | 8 个线性 MTD 与 image_cfg 一致；`data/data_r` 不出现 MTD 设备 |
+| `tc_spinand_fit_probe` | `os` 页 0 magic `0xD00DFEED`、totalsize 合法 |
+| `tc_spinand_check_block` | 物理块 0 与 `os` 起始块可读且结论只有 good/-RT_ERROR |
+| `tc_spinand_repeat_read` | `os` 页 0 连续 100 次读取一致；打印 clean/corrected 统计 |
+| `tc_spinand_bounds` | 越界页/块/超长 buffer 拒绝（`-RT_MTD_EIO`） |
+| `tc_spinand_write_rejected` | 写/擦/移动/标坏 `-RT_EPERM`；generic read `-RT_ENOSYS`、write `-RT_EPERM`、control `-RT_ENOSYS` |
+
+常见失败与处理：
+
+| 现象 | 指向 |
+|---|---|
+| `qspi0: controller init failed (-116), bus not registered` | 修复前构建的组合："复位不自清" 被当作致命错误。`-116`=`-RT_ETIMEOUT`（ETIMEDOUT）；原厂 HAL 对该位超时是警告并继续（见 12-storage 12.4.2），控制器功能正常。用修复后固件即可恢复；若仍失败才需要查时钟/引脚 |
+| `qspi0: WARNING controller reset not self-cleared` | 预期内的警告（硅片行为），继续注册总线，可忽略 |
+| `SPI NAND is NOT initialised` | 看启动日志 `spinand: reset ...`：复位两次失败会直接终止初始化（不注册设备），伴随 `rt_hw_qspi0_dump` 输出；检查 QSPI0 频率/引脚/电源 |
+| `JEDEC ID FF FF FF FF`/`00 00 00 00` | 读链路问题：非 MSB 模式或 RX 采样沿错误都会重现，`TCFG=0x41c0` 应保持 |
+| `configuration did not stick` | CFG 写入未生效：检查 SET_FEATURE 命令与 BUSY 状态 |
+| `linear MTD device 'os' missing` | 分区未注册：看 `spinand: MTD partition registration FAILED` 或 geometry 与 image_cfg 不匹配警告 |
+| `os FIT magic` 断言失败 | 页寻址/映射错误：核对分区起始块 12×64 页=768；若 Bootloader 跳过坏块烧写，先记录坏块分布（见 12-storage 12.7.3），不要臆断映射 |
+| 越界用例 FAIL | 驱动边界检查被削弱，回滚驱动改动 |
+
+## 17.3 外设测试入口
+
+以下外设命令需要先在 `scons --menuconfig` 中启用对应外设；默认 `.config` 包含 UART0、显示/GE 和 GT911 触摸测试命令。
+
+| 命令 | 功能 | 需要硬件 |
+|---|---|---|
+| `periph_status` | 列出已注册设备 | 否 |
+| `i2c_scan i2c3` | 扫描 I2C | I2C 从机/上拉 |
+| `touch_test 10` | 读取 GT911 触摸点 10 秒 | 7" LVDS CTP |
+| `gt911_dump` | 打印 GT911 ID、配置和状态寄存器 | GT911 |
+| `gt911_reset` | 复位并重新探测 GT911 | GT911 |
+| `can_baud can0 500000` | 设置 CAN 位速率 | 收发器 + 对端 |
+| `can_mode can0 normal` | 设置 CAN 模式 | 收发器 + 对端 |
+| `can_send can0 0x123 11 22` | 发送 CAN | 收发器 + 对端 |
+| `can_dump can0 5` | 接收 CAN | 收发器 + 对端 |
+| `pwm_test 0 1000000 500000 3` | PWM 输出 | 示波器/负载 |
+| `gpio_toggle PC.7 5 200` | GPIO 翻转 | LED/示波器 |
+| `rtc_test` | 读 RTC | 32K 晶振/电池 |
+| `wdt_test timeleft` | 读取剩余秒数 | 否 |
+| `wdt_test feed` | 喂狗（须在 clr_thd..rst_thd 窗口内） | 看门狗已启动 |
+| `wdt_test start 10` | 启动看门狗 | **会复位** |
+| `wdt_test stop` | 停止看门狗 | 否 |
+| `disp_clk` | 显示/GE CMU 寄存器 | 否 |
+| `disp_colorbar 1` | DE 硬件 Color Bar | LVDS 面板 |
+| `disp_info` | 显示参数与 buffer 地址 | 否 |
+| `disp_test` | Color Bar/fill/pan/VSync | LVDS 面板 |
+| `ge_test` | GE Fill/BitBlt/Scale/Blend/Rotate | GE + 内存 |
+| `lvgl_demo` | 启动 LVGL 9.6.0 演示 | LVDS + 外部 LVGL + GT911 |
+| `lvgl_demo status` | 显示 flush/FPS/flush_ms/触摸状态 | LVGL 已启动 |
+| `lvgl_touch 10` | 统计 LVGL 触摸坐标范围 | LVGL + GT911 |
+| `lvgl_demo bench 10` | 持续动画测量 presented FPS | LVGL 已启动 |
+
+## 17.4 GPIO 测试
+
+### 输出
+
+```text
+msh > gpio_toggle PC.7 10 500
+```
+
+预期：PC.7 每 500 ms 翻转一次。用 LED 或示波器确认。
+
+### 输入
+
+```c
+rt_pin_mode(rt_pin_get("PA.12"), PIN_MODE_INPUT_PULLUP);
+rt_kprintf("%d\n", rt_pin_read(rt_pin_get("PA.12")));
+```
+
+### 中断
+
+```c
+rt_pin_attach_irq(pin, PIN_IRQ_MODE_FALLING, handler, RT_NULL);
+rt_pin_irq_enable(pin, PIN_IRQ_ENABLE);
+```
+
+用按键或信号发生器触发，统计 handler 次数。
+
+### 常见问题
+
+| 现象 | 原因 |
+|---|---|
+| 读回不变 | 引脚被外设占用/功能不是 GPIO |
+| 中断不进 | 未 `rt_pin_irq_enable`、PLIC 未 umask |
+| 中断风暴 | 电平触发且未清除/外部一直有效 |
+| 输出无变化 | 引脚被其他外设覆盖、负载过大 |
+
+## 17.5 UART 测试
+
+### 回环
+
+TX 短接 RX，发送数据并读回：
+
+```c
+rt_device_write(uart, 0, "0123456789", 10);
+rt_device_read(uart, 0, buf, sizeof(buf));
+```
+
+### 双机
+
+两块板交叉 TX/RX/GND，分别 115200 和 921600，连续发送 1 MB。
+
+### 常见问题
+
+| 现象 | 原因 |
+|---|---|
+| 无输出 | pinmux/时钟/波特率 |
+| 乱码 | 时钟频率或波特率不匹配 |
+| 丢字节 | RX FIFO/ring buffer 太小、ISR 延迟 |
+| 只能发不能收 | RX 未使能、PA.1 未上拉、对端 TX 未接 |
+
+## 17.6 I2C 测试
+
+```text
+msh > i2c_scan i2c3
+```
+
+- 有设备但读写失败：地址/寄存器/时序；
+- 全部无响应：上拉、供电、pinmux；
+- 偶发超时：从机时钟拉伸、总线电容、干扰；
+- SDA 一直被拉低：stuck 恢复是否生效。
+
+用逻辑分析仪确认 START/STOP/ACK。
+
+### GT911 触摸
+
+```text
+msh > i2c_scan i2c3
+msh > gt911_dump
+msh > touch_test 10
+```
+
+2026-11-05 实机结果：
+
+```text
+gt911: found at 0x5d, id 911
+id: 39 31 31 00 60 10
+cfg: 81 00 04 58 02 05 3d 20
+touch id=0 DOWN x=502 y=35 w=17
+touch id=1 DOWN x=616 y=156 w=43
+touch id=2 DOWN x=733 y=250 w=23
+touch id=3 DOWN x=974 y=155 w=40
+```
+
+多点 DOWN/MOVE 已通过；X/Y 方向和是否需要 swap/flip 还需按面板
+四角坐标校准。`gt911_dump` 用于查看 ID、配置和 `0x814E` 状态：
+
+- `0x80`：有数据待读取；
+- 低 4 位：触摸点数；
+- 长时间为 0 且触摸无反应：检查复位、INT、供电和 I2C3。
+
+## 17.7 CAN 测试
+
+### 最小接线
+
+```text
+CAN_H <-> CAN_H
+CAN_L <-> CAN_L
+GND   <-> GND
+120 Ω 两端
+```
+
+### 步骤
+
+1. 双方 500 kbps；
+2. 对端发标准帧 0x123，D213 `can_dump can0 5`；
+3. D213 `can_send can0 0x123 11 22 33`，对端确认；
+4. 改扩展帧 0x18FF1234；
+5. 改 0-8 字节长度；
+6. 配置过滤器；
+7. 断开总线，观察错误计数；
+8. 恢复总线，确认 bus-off 恢复；
+9. 1 Mbps 连续发送。
+
+### 常见问题
+
+| 现象 | 原因 |
+|---|---|
+| 发送失败 | 无 ACK、总线只有单节点、波特率不一致 |
+| 收不到 | 过滤器、模式、终端电阻、CAN_H/L 反接 |
+| bus-off | 错误累积、无对端、干扰 |
+| 过滤器无效 | 标准/扩展不匹配、双过滤器限制 |
+| 数据错位 | DLC/字节序/结构体未清零 |
+
+## 17.8 PWM 测试
+
+```text
+msh > pwm_test 0 1000000 500000 3
+```
+
+示波器检查：
+
+- 频率 1 kHz；
+- 高电平 500 us；
+- 3 秒后停止。
+
+如果无输出：
+
+- PC.0/PC.1 是否被 SDMC1 占用；
+- PWM 时钟是否使能；
+- 通道号是否 0-3；
+- 负载是否把引脚拉死。
+
+## 17.9 WDT 测试
+
+**高风险。**
+
+```text
+msh > wdt_test start 10
+msh > wdt_test timeleft
+msh > wdt_test feed
+msh > wdt_test stop
+```
+
+如果不喂狗，超时后复位。D21x 的计数器只能在 `clr_thd..rst_thd`
+窗口内清零（clr_thd 默认 3 s；驱动在 `SET_TIMEOUT` 时按原厂规则把
+clr_thd 限制到 `rst_thd - 2`），窗口外喂狗会被硬件**静默忽略**，
+不能当作喂狗成功。用于验证：
+
+- 看门狗计数与 `GET_TIMELEFT` 秒级读数；
+- `KEEPALIVE` 在窗口内清零并延长超时；
+- `STOP` 后超过超时时间不复位；
+- 不喂狗时的复位路径和复位后串口重启。
+
+2026-11-09 已在 `d213-usbdev-utest` 实机全项通过：`start 6` 后
+4.5 s 喂狗，剩余时间从 2 s 回到 6 s 并越过原 6 s 截止时间；
+`stop` 后等待 7 s 不复位；`start 4` 后 2.3 s 喂狗（clr_thd=2）
+清零并越过 4 s；`start 3` 不喂狗，SPL 打印
+`Reset action: Watchdog-Reset` 并正常重启。回归工具：
+`tools/d213_wdt_check.py`（报告 `20261109-055217`）。
+
+不要在没有恢复手段时测试。
+
+## 17.10 RTC 测试
+
+```text
+msh > rtc_test
+```
+
+检查：
+
+- 时间是否合理；
+- 断电 10 分钟后是否继续走；
+- 32K 晶振是否起振；
+- 写入/读回是否一致。
+
+## 17.11 压力测试建议
+
+| 项目 | 方法 | 目标 |
+|---|---|---|
+| 冷启动 | 断电/上电 100 次 | 每次都进入 MSH |
+| Tick | 运行 24 h，比较 `rt_tick_get` 与 RTC | 无累积漂移 |
+| 调度 | 多线程 + IPC 循环 | 无死锁/优先级反转 |
+| UART | 1 MB 连续收发 | 无丢字节 |
+| I2C | 10 万次读写 | 无超时/总线锁死 |
+| CAN | 1 Mbps 连续帧 | 无丢帧/错误增长 |
+| GPIO | 高频翻转 + 中断 | 无中断丢失 |
+| 内存 | 反复 malloc/free | 无泄漏/碎片 |
+| 异常 | 非法地址/栈溢出 | 有可读诊断 |
+
+这些测试目前**未执行**。
+
+## 17.12 显示与 GE 测试
+
+### 硬件 Color Bar
+
+```text
+msh > disp_colorbar 1
+msh > disp_colorbar 0
+```
+
+预期：彩条出现/消失。若彩条不出现，优先检查：
+
+- LVDS 时钟（52 MHz / 364 MHz）；
+- LVDS link 选择（demo128 为 link 1，PD.8-PD.17）；
+- 面板使能 PC.7；
+- DE timing 的极性/porch；
+- 背光和面板供电。
+
+彩条不依赖 Framebuffer，因此是分离“显示接口问题”和“Framebuffer 问题”的第一道测试。
+
+### 实机结果（2026-11-04）
+
+```text
+disp_colorbar 1        -> hardware color bar on，面板显示彩条
+disp_info              -> 1024x600, 32 bpp, stride 4096
+                          buffers: 2 x 2457600 bytes
+                          fb0=0x45800000 fb1=0x45a58000
+disp_test              -> pan fb0 (red): OK
+                          pan fb1 (green): OK
+                          vsync: 10/10 received
+                          display stats: vsync=4692 underflow=0 active=1
+ge_test（2026-11-09）  -> fillrect PASS, bitblt PASS, scale 2x PASS,
+                          blend PASS (0x80ff007f),
+                          rotate 90 PASS (clockwise)
+                          20 轮回归无 ge timeout（20261109-063037）
+```
+
+结论：LVDS、DE、Framebuffer、双缓冲、VSync、硬件 Color Bar 和 GE Fill/BitBlt/混合
+已实机验证；GE 2× 缩放与 90° 顺时针旋转像素校验通过。
+
+如果启动时打印 `lcd: display power-up failed`，先执行 `disp_clk`：
+
+- `PLL_FRA2` 应为 364 MHz 对应的分频/小数配置；
+- `CMU disp` 的 PIX 分频应为 7；
+- `CMU de` / `CMU ge` 的 bit 13（RSTN）应为 1，分频字段应使引擎时钟为 200 MHz；
+- `CMU lvds` 的 bit 13（RSTN）应为 1，门控位应打开。
+
+### Framebuffer / VSync
+
+```text
+msh > disp_info
+msh > disp_test
+```
+
+`disp_test` 会：
+
+1. 打开硬件彩条 2 秒；
+2. 用红色填 fb0 并切换；
+3. 双缓冲时用绿色填 fb1 并切换；
+4. 等待 10 次 VSync 并打印计数。
+
+若 `vsync=0/10`，检查 DE IRQ 59 是否注册、`TIMING_INIT` 是否使能、DE timing 是否真正启动。
+
+### GE
+
+```text
+msh > ge_test
+```
+
+FillRect/BitBlt 会做精确像素回读；Alpha 混合检查红/蓝通道；2× 缩放检查四象限中心像素；90° 旋转检查红/蓝半区并报告方向（当前硬件为顺时针）。2026-11-09 实机结果（`d213-usbdev-utest`）：
+
+```text
+ge: version 0x00000100
+ge: fillrect PASS
+ge: bitblt PASS
+ge: scale 2x PASS
+ge: blend PASS (0x80ff007f)
+ge: rotate 90 PASS (clockwise)
+```
+
+修复前曾出现每一步都打印 `[aic] ge timeout` 并跟 256 个寄存器
+转储、但像素结果仍正确的问题。原因是公共 RISC-V PLIC 先 EOI 再调用
+ISR：GE 电平中断在首次 ISR 清状态前被 PLIC 再次锁存，第二次 ISR 读到
+`status=0`，把原厂 HAL 的 `data->status` 覆盖为 0 并再次发送完成事件，
+`ge_start_and_wait()` 因此走超时分支（转储 + 复位 GE）。本地补丁让
+`aic_ge_handler()` 忽略 `status==0` 的重复中断后，每轮约 70 ms，
+20 轮回归无超时（报告 `20261109-063037`，工具
+`tools/d213_ge_check.py`）。
+
+公共修复 `5caa519bec2e261146260149e2a8aa1708d79940` 已解决上述 PLIC
+完成顺序问题，本地 GE 临时守卫已撤销。上述报告是历史硬件结果，撤销后
+仍需上板重跑，不能代替本次验证。
+
+若 GE 仍失败：
+
+- 检查 `ge: version` 是否为非零；
+- 检查 `GE_BASE`/`GE_IRQn`；
+- 检查是否再次出现 `[aic] ge timeout`（检查完成状态、硬件错误及中断路径）；
+- 检查缓冲区地址/stride 对齐；
+- 检查 Cache 维护是否执行；
+- 检查多平面 YUV 的地址、stride 和裁剪对齐（支持范围见 13.18）。
+
+### LVGL 9.6.0
+
+```text
+msh > lvgl_demo
+msh > lvgl_demo status
+msh > lvgl_touch 10
+msh > lvgl_demo bench 10
+msh > lvgl_demo stop
+```
+
+页面验证项：
+
+- `TL/TR/BL/BR` 四角标记和中心十字；
+- `CLICK` 按钮计数递增；
+- `DRAG` 滑块可按住拖动并更新百分比；
+- `lvgl_demo status` 中 flush/FPS/flush_ms 持续变化；
+- `lvgl_touch 10` 记录四角触摸范围，用于判断 swap/flip；
+- `lvgl_demo bench 10` 记录持续动画下的实际 presented FPS。
+
+若启动失败：
+
+- 检查 `BSP_USING_DISPLAY` 和 32 bpp Framebuffer；
+- 检查 `BSP_USING_LVGL`；
+- 检查 `LVGL_DIR/lvgl.h` 是否存在；
+- 检查 `LVGL_DIR/include/lvgl/lv_version.h` 是否为 9.6.x；
+- 检查 `LVGL_AIC_DIR` 是否指向 `lvgl-aic-standalone`；
+- 检查 `rt_malloc_align` 是否成功（约 2.4 MB）；
+- 检查 LVGL 线程栈 32 KB 是否足够。
+
+以下为迁移前 BSP 内 LVGL 端口的实机结果；新的
+`lvgl-aic-standalone` 镜像需要重新执行同样步骤，不能直接沿用 HW 结论。
+
+2026-11-05 实机结果（旧 BSP 内端口，软件渲染路径）：
+
+```text
+msh > lvgl_demo
+lvgl: started
+lvgl: touch gt911 range 1024x600
+
+msh > lvgl_touch 10
+lvgl_touch: events=487 samples=133 extent x=9..1014 y=55..558
+```
+
+`lvgl_demo` 页面正常上屏，CLICK 和 DRAG 均可用；坐标范围与四角标签
+`TL/TR/BL/BR` 的内缩位置一致，默认方向无需 swap/flip。边缘有效区如需
+精调，再使用 `LVGL_AIC_TOUCH_SWAP_XY/X_FLIP/Y_FLIP`。
+
+若显示正常但无触摸：
+
+1. 先运行 `touch_test 10` 确认 GT911 原始触摸；
+2. 检查 `LVGL_AIC_USE_TOUCH` 和 `LVGL_AIC_TOUCH_DEVICE="gt911"`；
+3. 检查 `lvgl_demo status` 是否显示 `touch=gt911`；
+4. 用 `LVGL_AIC_TOUCH_SWAP_XY/X_FLIP/Y_FLIP` 修正方向。
+
+第一阶段不启用 FreeType、MPP 图片解码、GE2D Draw Unit 和复杂页面。
+
+## 17.13 构建问题
+
+见 [15-build-pack-deploy.md](15-build-pack-deploy.md) 的“常见构建失败”。
+
+## 17.14 启动问题
+
+### 无任何串口输出
+
+1. 供电；
+2. 串口线 TX/RX/GND；
+3. 波特率 115200；
+4. Bootloader 是否运行；
+5. 启动介质是否可读。
+
+### 有 Bootloader 无 RT-Thread
+
+1. 镜像是否写入 `os` 分区；
+2. FIT 加载地址/入口；
+3. 镜像大小是否超过分区；
+4. `rtthread.elf` 是否真的更新（时间戳/CRC）；
+5. 串口是否在 `rt_hw_board_init` 前被改引脚。
+
+### 启动后反复复位
+
+1. 看门狗是否被意外启动；
+2. 堆是否覆盖 Bootloader；
+3. 中断是否未清导致风暴；
+4. 电源是否跌落。
+
+## 17.15 外设初始化问题
+
+| 现象 | 检查 |
+|---|---|
+| `periph_status` 显示 missing | Kconfig 是否启用、SConscript 是否加入源文件、init 是否返回错误 |
+| 初始化卡住 | HAL 轮询等待时钟/总线；检查时钟门控和引脚 |
+| 初始化后系统变慢 | 中断风暴/忙等 |
+| 只有部分实例可用 | 引脚冲突、时钟表缺失 |
+| 重新编译后行为变化 | `.config`/`rtconfig.h` 不同步 |
+
+## 17.16 已知缺陷
+
+- GPIO 开漏未真正实现；
+- GPIO 去抖没有毫秒换算；
+- CAN 状态码映射不完整；
+- I2C 仅主机、阻塞；
+- UART RX 仍为 1 ms 轮询；仅 UART7 有 RTS/CTS 自动流控；RS485
+  DE/RE 未实现（UART TX DMA 已实现）；
+- 显示/GE 已实机验证；显示仅支持 LVDS，MIPI/RGB 未实现；
+- GE 仅 RGB、Normal 模式，无 CMD Queue；Fill/BitBlt/混合/2× 缩放/
+  90° 顺时针旋转有像素级校验（20 轮 `20261109-063037`），任意角度/
+  翻转/其他缩放比例未验证；
+- GT911 触摸已实现，方向/中断模式待校准；
+- LVGL 源码作为外部依赖，不随 BSP 提交；
+- 视频未实现；网络、USB Host、音频播放与 DMIC 采集已接入并实机
+  验证；USB0 Device（CDC ACM）枚举、双向数据和 `usb_dev_console
+  on/off` 切换（16 轮）已实机验证；加密引擎
+  （CE，hwcrypto）已实机 5/5 回归通过；
+  存储已接入 SPI NAND/SD，`/rodata` 只读 FAT 与 `/nand` LittleFS +
+  持久化 BBT 已实机验证，OTA/A-B 只读诊断、分区 MSH 输出、BBT 双槽
+  切换和看门狗复位注入已实机 PASS，但没有 NFTL/Refresh/OTA 更新引擎；
+- `usb_dev_console on` 时可能打印 `[E/USB] ep2 ... 0x80088200`：
+  finsh 和 console 各打开一次 `usb-acm0`，第二次 open 会重新 arm
+  已使能的 OUT 端点；端点守卫会拒绝这次操作并返回 `-2`，切换仍正常。
+  这不是故障。历史缺陷（切回 UART 后 shell 挂死）已由守卫修正和
+  console/shell 切换顺序修复，16 轮回归通过；
+- CAN 外部总线、GPIO/PWM 外部波形等仍缺实机日志。
+
+这些问题在对应文档中都有说明，不应在发布说明中隐藏。

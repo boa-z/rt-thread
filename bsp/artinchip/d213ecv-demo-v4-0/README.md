@@ -345,3 +345,9 @@ BSP 自有代码使用 Apache-2.0。`../libraries/soc/d21x/hal/` 和
 （Apache-2.0），逐字节保留原始版权声明。LVGL 为 MIT 许可的外部依赖，
 不随 BSP 提交。Bootloader、PBP 和 DDR 二进制由用户本地 SDK 提供，不进入
 本仓库。
+
+## 8. 内部开发文档
+
+`docs/` 保留内部开发所需的架构、启动、时钟、外设、存储、显示、构建打包、
+测试、维护和上游化资料。该目录不随上游 BSP 提交，入口见
+[`docs/README.md`](docs/README.md)。

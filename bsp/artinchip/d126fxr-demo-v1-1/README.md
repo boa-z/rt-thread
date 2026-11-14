@@ -265,3 +265,9 @@ d126fxr-demo-v1-1/
 BSP 自有代码使用 Apache-2.0。RT-Thread 内核和组件遵循仓库根目录的
 `LICENSE`。原厂 Bootloader、PBP 和镜像工具来自 Luban-Lite，由用户本地
 SDK 提供，不进入本仓库。
+
+## 8. 内部开发文档
+
+`docs/` 保留板卡对应关系、启动架构、构建打包、测试、IP 兼容、显示触摸、
+上游化和来源说明。该目录不随上游 BSP 提交，入口见
+[`docs/README.md`](docs/README.md)。

@@ -12,7 +12,8 @@ RISC-V M-mode。
 | ArtInChip D126FxR-DEMO-V1-1 | D126（D12p） | T-Head E907F，RV32IMafc | [`d126fxr-demo-v1-1`](d126fxr-demo-v1-1/README.md) | [快速上手](https://aicdoc.artinchip.com/topics/quickstart/d126-boards-d12xpro.html#d126fxv-demo-v2-0) |
 
 D213 使用 `ARCH_RISCV64` + `ARCH_RISCV_FPU_D`；D126 使用 `ARCH_RISCV32` +
-`ARCH_RISCV_FPU_S`。
+`ARCH_RISCV_FPU_S`。各板 `docs/` 保存内部开发资料（架构、启动、外设、
+测试、上游化等），不随上游 BSP 提交，入口见各板的 `docs/README.md`。
 
 ## 命名约定
 
