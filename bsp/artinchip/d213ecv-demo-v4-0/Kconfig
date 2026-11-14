@@ -1,0 +1,30 @@
+mainmenu "RT-Thread Project Configuration"
+
+BSP_DIR := .
+
+RTT_DIR := ../../..
+
+PKGS_DIR := packages
+
+source "$(RTT_DIR)/Kconfig"
+osource "$(PKGS_DIR)/Kconfig"
+
+rsource "board/Kconfig"
+rsource "board/Kconfig.peripherals"
+rsource "../libraries/Kconfig"
+
+config BOARD_ARTINCHIP_D213_DEMO128
+    bool
+    select AIC_SOC_D21X
+    select ARCH_CPU_64BIT
+    select ARCH_RISCV
+    select ARCH_RISCV64
+    select ARCH_RISCV_FPU
+    select ARCH_RISCV_FPU_D
+    select ARCH_RISCV_M_MODE
+    select RT_USING_RISCV_NEW_COMMON
+    select RT_USING_ADT
+    select RT_USING_ADT_BITMAP
+    select RT_USING_COMPONENTS_INIT
+    select RT_USING_USER_MAIN
+    default y

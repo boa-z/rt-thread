@@ -1,0 +1,19 @@
+from building import *
+
+import os
+
+cwd = GetCurrentDir()
+src = []
+CPPPATH = [
+    cwd,
+    os.path.join(cwd, '..', 'applications'),
+    os.path.join(cwd, '..', 'board'),
+]
+
+if GetDepend('BSP_USING_UTEST'):
+    src += Glob('tc_*.c')
+    src += ['context_gcc.S']
+
+group = DefineGroup('D213Utest', src, depend=['BSP_USING_UTEST'], CPPPATH=CPPPATH)
+
+Return('group')

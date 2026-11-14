@@ -1,0 +1,19 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = []
+CPPPATH = []
+CPPDEFINES = []
+
+if GetDepend('BSP_SPINAND_LITTLEFS'):
+    src += ['lfs.c', 'lfs_util.c']
+    CPPPATH += [cwd]
+    # LFS_ASSERT calls lfs_mlist_isopen(), which upstream only compiles
+    # when RT_DEBUG is defined.  Disable the assertions instead of
+    # patching the imported source.
+    CPPDEFINES += ['LFS_NO_ASSERT']
+
+group = DefineGroup('littlefs', src, depend=['BSP_SPINAND_LITTLEFS'],
+                    CPPPATH=CPPPATH, CPPDEFINES=CPPDEFINES)
+
+Return('group')

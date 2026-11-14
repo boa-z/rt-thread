@@ -1,0 +1,54 @@
+menu "Board options"
+
+config AIC_DRAM_TOTAL_SIZE
+    hex "DRAM total size"
+    default 0x8000000
+    help
+        Total DDR size of the D213ECV-DEMO-V4-0 board.  The bootloader loads the
+        RT-Thread image at 0x40000000; the remaining DDR is used as heap.
+
+config AIC_BOOTLOADER_RESERVED_SIZE
+    hex "Reserved DDR for the ArtInChip bootloader"
+    default 0x800000
+    help
+        The D213 bootloader is linked near the top of DDR.  Keep this
+        region out of the RT-Thread heap so that the bootloader image is
+        not overwritten while the OS is running.
+
+config BSP_UART_CLK_FREQ
+    int "UART input clock (Hz)"
+    default 48000000
+    help
+        Common UART input clock selected by the ArtInChip bootloader clock
+        tree.  All UART instances on the D213ECV-DEMO-V4-0 board use 48 MHz.
+
+config BSP_CLINT_FREQ
+    int "CLINT timer frequency (Hz)"
+    default 4000000
+
+endmenu
+
+menu "Testing"
+
+config BSP_USING_UTEST
+    bool "Enable D213 BSP utest cases"
+    default n
+    select RT_USING_UTEST
+    help
+        Builds the D213-specific utest cases under utest/.  The cases use
+        the standard RT-Thread utest framework and are registered as
+        bsp.d213.*.  This option does not enable the official RT-Thread
+        test suite; enable RT-Thread Utestcases separately when needed.
+
+config BSP_UTEST_CAN_LOOPBACK
+    bool "Enable D213 CAN0 loopback utest"
+    default n
+    depends on BSP_USING_UTEST && BSP_USING_CAN0
+    help
+        Adds the bsp.d213.can0.loopback case.  The D21x SELFTEST mode did
+        not receive or complete a frame without external CAN0 TX/RX wiring
+        on the D213ECV-DEMO-V4-0 board.  Enable this only when TX and RX are wired
+        together, or when a transceiver, termination and an ACK-ing peer
+        are connected.
+
+endmenu

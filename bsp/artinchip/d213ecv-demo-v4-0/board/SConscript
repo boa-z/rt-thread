@@ -1,0 +1,32 @@
+from building import *
+
+import os
+import subprocess
+import sys
+
+cwd = GetCurrentDir()
+src = ['board.c', 'cache.c', 'clock.c', 'interrupt.c', 'pinmux.c',
+       'timer.c', 'peripherals.c']
+CPPPATH = [cwd]
+
+if GetDepend('BSP_USING_KEYADC'):
+    src += ['keyadc.c']
+if GetDepend('BSP_USING_WRI'):
+    src += ['wri.c']
+if GetDepend('BSP_USING_USB0_DEVICE'):
+    src += ['usb_device.c']
+if GetDepend('BSP_SDCARD_AUTOMOUNT') and GetDepend('BSP_USING_SDMC1'):
+    src += ['sdcard.c']
+if GetDepend('BSP_USING_SPINAND_MTD_NAND'):
+    bsp = Dir('#').abspath
+    gen_dir = os.path.join(bsp, 'build')
+    subprocess.check_call([sys.executable,
+        os.path.join(bsp, 'tools', 'gen_nand_parts.py'),
+        '--output', os.path.join(gen_dir, 'spinand_parts_gen.h')])
+    CPPPATH += [gen_dir]
+    src += ['nand_layout.c', 'ota_slot.c']
+if GetDepend('BSP_SPINAND_RODATA_FS') or GetDepend('BSP_SPINAND_LITTLEFS'):
+    src += ['storage.c']
+
+group = DefineGroup('Board', src, depend=[''], CPPPATH=CPPPATH)
+Return('group')

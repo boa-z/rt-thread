@@ -1,0 +1,1007 @@
+menu "On-chip Peripheral Drivers"
+
+config BSP_USING_GPIO
+    bool "Enable GPIO / pin device"
+    default y
+    select RT_USING_PIN
+    help
+        Enables the standard RT-Thread pin device ("gpio") on top of the
+        ArtInChip GPIO HAL.  Pin names use the PA.n ... PH.n form.
+
+menu "UART"
+
+config BSP_USING_UART0
+    bool "Enable UART0 (console)"
+    default y
+    select RT_USING_SERIAL
+
+config BSP_USING_UART1
+    bool "Enable UART1 (PA.4/PA.5)"
+    default y
+    select RT_USING_SERIAL
+
+config BSP_USING_UART2
+    bool "Enable UART2 (PA.8/PA.9, shared with I2C2)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART3
+    bool "Enable UART3 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART4
+    bool "Enable UART4 (PB.6/PB.7, shared with SDMC0/QSPI0)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART5
+    bool "Enable UART5 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART6
+    bool "Enable UART6 (board pinmux required)"
+    default n
+    select RT_USING_SERIAL
+
+config BSP_USING_UART7
+    bool "Enable UART7 (PF.6..PF.9, BT HCI)"
+    default n
+    select RT_USING_SERIAL
+    help
+        UART7 is wired to the Wi-Fi/BT combo module's HCI port on the
+        carplay board: PF.6 TX, PF.7 RX, PF.8 RTS, PF.9 CTS (function 5).
+        The port runs 115200 8N1; the BT stack itself is not part of this
+        BSP.
+
+config BSP_UART7_AUTO_FLOW_CTRL
+    bool "Enable RTS/CTS auto flow control on UART7"
+    depends on BSP_USING_UART7
+    default n
+    help
+        Sets the controller's hardware flow-control mode (MCR bit 5 plus
+        RTS control) so RTS follows the RX FIFO occupancy and TX stops
+        when CTS is deasserted.  Needed for a 4-wire BT HCI link; leave
+        off when CTS is not driven, or when the peer leaves it floating
+        low, because the transmitter then stalls.
+
+config BSP_USING_UART_DMA
+    bool "Route UART TX through the external DMAC"
+    depends on BSP_USING_DMAC
+    select RT_SERIAL_USING_DMA
+    default n
+    help
+        Opens the DMAC DRQ path (DMA_ID_UART0 + n) for any UART that is
+        opened with RT_DEVICE_FLAG_DMA_TX.  RX keeps the existing polling
+        path.  Buffers must be 8-byte aligned for the DMA fast path; the
+        driver falls back to a polled write when a buffer is misaligned
+        or no channel is free, so writes are never dropped.  The
+        "uart_dma_test" command verifies uart1 with MCR loopback.
+
+endmenu
+
+menu "I2C"
+
+config BSP_USING_I2C0
+    bool "Enable I2C0 (PD.6/PD.7)"
+    default n
+    select RT_USING_I2C
+    select AIC_USING_HAL_I2C
+    select AIC_USING_DRV_I2C
+
+config BSP_USING_I2C1
+    bool "Enable I2C1 (PD.18/PD.19)"
+    default n
+    select RT_USING_I2C
+    select AIC_USING_HAL_I2C
+    select AIC_USING_DRV_I2C
+
+config BSP_USING_I2C2
+    bool "Enable I2C2 (PA.8/PA.9, shared with UART2)"
+    default n
+    select RT_USING_I2C
+    select AIC_USING_HAL_I2C
+    select AIC_USING_DRV_I2C
+
+config BSP_USING_I2C3
+    bool "Enable I2C3 (PA.10/PA.11, touch controller)"
+    default y
+    select RT_USING_I2C
+    select AIC_USING_HAL_I2C
+    select AIC_USING_DRV_I2C
+
+if BSP_USING_I2C0
+config BSP_I2C0_SPEED
+    int "I2C0 bus speed (Hz)"
+    default 400000
+config BSP_I2C0_10BIT
+    bool "I2C0 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C1
+config BSP_I2C1_SPEED
+    int "I2C1 bus speed (Hz)"
+    default 400000
+config BSP_I2C1_10BIT
+    bool "I2C1 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C2
+config BSP_I2C2_SPEED
+    int "I2C2 bus speed (Hz)"
+    default 400000
+config BSP_I2C2_10BIT
+    bool "I2C2 uses 10-bit addresses"
+    default n
+endif
+
+if BSP_USING_I2C3
+config BSP_I2C3_SPEED
+    int "I2C3 bus speed (Hz)"
+    default 400000
+config BSP_I2C3_10BIT
+    bool "I2C3 uses 10-bit addresses"
+    default n
+endif
+
+endmenu
+
+menu "ADC (GPAI)"
+
+config BSP_USING_GPAI6
+    bool "Enable GPAI6 ADC (PA.6)"
+    default n
+    select RT_USING_ADC
+    help
+        Enables the D21x general-purpose ADC controller and channel 6.
+        The device is registered as "gpai" with 12-bit resolution; PA.6
+        is the KEYADC ladder input on the D213ECV-DEMO-V4-0.  The
+        reference is the LDO30 analog supply, reported through
+        RT_ADC_CMD_GET_VREF.
+
+if BSP_USING_GPAI6
+config BSP_GPAI6_ADC_ACQ
+    hex "GPAI6 acquisition time (0x00-0xff)"
+    range 0 0xff
+    default 0x2f
+endif
+
+endmenu
+
+menu "Keys (KEYADC)"
+
+config BSP_USING_KEYADC
+    bool "Enable K4-K7 key ladder (UP/DOWN/LEFT/RIGHT)"
+    default n
+    select BSP_USING_GPAI6
+    help
+        Samples the KEYADC resistor ladder on PA.6 and reports K4 UP,
+        K5 DOWN, K6 LEFT and K7 RIGHT press, release and long-press
+        events to registered callbacks.  The MSH command "keyadc" shows
+        the latest sample and can toggle event printing.
+
+if BSP_USING_KEYADC
+config BSP_KEYADC_LONG_PRESS_MS
+    int "Long-press threshold (ms)"
+    range 100 60000
+    default 1000
+endif
+
+endmenu
+
+menu "Touch"
+
+config BSP_USING_TOUCH_GT911
+    bool "Enable GT911 capacitive touch (I2C3)"
+    default y
+    depends on BSP_USING_I2C3 && BSP_USING_GPIO
+    select RT_USING_TOUCH
+    select RT_TOUCH_PIN_IRQ
+    help
+        Enables the GT911 touch controller on I2C3.  The D213ECV-DEMO-V4-0
+        uses PA.8 for reset and PA.9 for interrupt.
+
+if BSP_USING_TOUCH_GT911
+config BSP_TOUCH_GT911_I2C_BUS
+    string "GT911 I2C bus name"
+    default "i2c3"
+
+config BSP_TOUCH_GT911_RST_PIN
+    string "GT911 reset pin"
+    default "PA.8"
+
+config BSP_TOUCH_GT911_INT_PIN
+    string "GT911 interrupt pin"
+    default "PA.9"
+
+config BSP_TOUCH_GT911_X_RANGE
+    int "GT911 X coordinate range"
+    default 1024
+
+config BSP_TOUCH_GT911_Y_RANGE
+    int "GT911 Y coordinate range"
+    default 600
+endif
+
+endmenu
+
+menu "CAN"
+
+config BSP_USING_CAN0
+    bool "Enable CAN0 (classic CAN 2.0A/B, PE.16/PE.17)"
+    default y
+    select RT_USING_CAN
+    help
+        Enables the D21x classic CAN controller.  CAN FD is not supported
+        by this hardware.
+
+config BSP_USING_CAN1
+    bool "Enable CAN1 (classic CAN 2.0A/B, PE.18/PE.19)"
+    default y
+    select RT_USING_CAN
+    help
+        Enables the D21x classic CAN controller.  CAN FD is not supported
+        by this hardware.
+
+endmenu
+
+config BSP_USING_PWM
+    bool "Enable PWM (4 channels, PC.0..PC.7)"
+    default y
+    select RT_USING_PWM
+    help
+        PWM0-2 are routed to PC.0-PC.5 by the board pinmux.  PWM3 shares
+        PC.6/PC.7 with other functions; PC.7 is the panel enable GPIO, so
+        do not use PWM3 while the display is enabled.
+
+config BSP_USING_WDT
+    bool "Enable watchdog"
+    default y
+    select RT_USING_WDT
+
+config BSP_USING_RTC
+    bool "Enable RTC"
+    default y
+    select RT_USING_RTC
+
+menu "Thermal Sensor (TSEN)"
+
+config BSP_USING_TSEN
+    bool "Enable internal temperature sensor"
+    default n
+    select RT_USING_SENSOR
+    help
+        Exposes the on-chip TSEN channels through the standard RT-Thread
+        sensor framework.  The CPU channel is registered as
+        "temp_tsen_cpu"; enabling the GPAI channel adds "temp_tsen_gpai".
+        The driver reads the per-chip slope/offset from the SID eFuse at
+        startup and falls back to the vendor default values when the
+        eFuse has no calibration data.
+
+config BSP_USING_TSEN_CPU
+    bool "Use the CPU temperature channel"
+    depends on BSP_USING_TSEN
+    default y
+
+config BSP_USING_TSEN_GPAI
+    bool "Use the GPAI temperature channel"
+    depends on BSP_USING_TSEN
+    default n
+
+endmenu
+
+menu "Crypto Engine (CE)"
+
+menuconfig BSP_USING_CE
+    bool "Enable Crypto Engine (AES/SHA, RT-Thread hwcrypto)"
+    default n
+    select RT_USING_HWCRYPTO
+    select RT_HWCRYPTO_USING_AES
+    select RT_HWCRYPTO_USING_AES_ECB
+    select RT_HWCRYPTO_USING_AES_CBC
+    select RT_HWCRYPTO_USING_MD5
+    select RT_HWCRYPTO_USING_SHA1
+    select RT_HWCRYPTO_USING_SHA2
+    select RT_HWCRYPTO_USING_SHA2_224
+    select RT_HWCRYPTO_USING_SHA2_256
+    select RT_HWCRYPTO_USING_SHA2_384
+    select RT_HWCRYPTO_USING_SHA2_512
+    help
+        Registers the D21x Crypto Engine at 0x10020000 as the default
+        RT-Thread hwcrypto device.  AES-128/192/256 ECB and CBC,
+        MD5, SHA-1 and SHA-224/256/384/512 are driven through the
+        standard rt_hwcrypto_symmetric_* and rt_hwcrypto_hash_* APIs.
+        The single CE task uses CPU addresses, so buffers are cleaned
+        and invalidated around every operation (the C906 D-cache is
+        not coherent with the engine).
+
+        The engine is polled; no interrupt is used.  DES/3DES, SM2/SM4,
+        HMAC and the TRNG descriptor are not exposed by this driver.
+        The utest suite "bsp.d213.ce" runs known-answer vectors.
+
+endmenu
+
+config BSP_USING_WRI
+    bool "Enable WRI reboot reason and the aicupg command"
+    default n
+    depends on BSP_USING_WDT
+    help
+        Exposes "aicupg" and "aicupg gotobl" in MSH.  "aicupg" latches
+        REBOOT_REASON_UPGRADE so the BROM enters its USB/UART upgrade loop;
+        "aicupg gotobl" latches REBOOT_REASON_BL_UPGRADE for the vendor
+        Bootloader upgrade command.  The board is reset through the
+        watchdog, which preserves the always-on WRI/RTC boot information.
+        The vendor Bootloader must be built with AIC_USING_WRI.
+        This option does not implement AICUPG, USB upgrade or NAND writes.
+
+config BSP_USING_PERIPH_TEST
+    bool "Enable peripheral MSH test commands"
+    default y
+    depends on BSP_USING_I2C0 || BSP_USING_I2C1 || BSP_USING_I2C2 || BSP_USING_I2C3 || \
+               BSP_USING_CAN0 || BSP_USING_CAN1 || BSP_USING_PWM || BSP_USING_WDT || \
+               BSP_USING_RTC || BSP_USING_GPIO || BSP_USING_DISPLAY || BSP_USING_GE
+
+menu "Display"
+
+config BSP_USING_DISPLAY
+    bool "Enable D21x DE + LVDS framebuffer"
+    default y
+    help
+        Enables the Display Engine UI layer, LVDS output and the RT-Thread
+        graphic device named "lcd".  The framebuffer is carved out of the
+        top of the non-bootloader DDR area.
+
+config BSP_DISPLAY_UI_BG_BLEND
+    bool "Blend UI with the background outside the video layer"
+    default n
+    depends on BSP_USING_DISPLAY
+    help
+        V1.3.3 UI background blending default. Runtime changes use the
+        framebuffer BG_BLEND_UI ioctls or the owner-aware display API.
+        Keep disabled for the existing opaque framebuffer/LVGL setup.
+
+config BSP_DISPLAY_WIDTH
+    int "Panel width"
+    default 1024
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HEIGHT
+    int "Panel height"
+    default 600
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PIXCLOCK
+    int "Panel pixel clock (Hz)"
+    default 52000000
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HFP
+    int "Horizontal front porch"
+    default 160
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HBP
+    int "Horizontal back porch"
+    default 160
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_HSW
+    int "Horizontal sync width"
+    default 20
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VFP
+    int "Vertical front porch"
+    default 20
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VBP
+    int "Vertical back porch"
+    default 12
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_VSW
+    int "Vertical sync width"
+    default 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_LVDS_LINK
+    int "LVDS link (0=link0 PD.18-27, 1=link1 PD.8-17)"
+    default 1
+    range 0 1
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_LVDS_MODE
+    int "LVDS data mapping (0=VESA24, 1=JEIDA24, 2=JEIDA18)"
+    default 0
+    range 0 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_FB_COUNT
+    int "Framebuffer count (1=single, 2=double)"
+    default 2
+    range 1 2
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PANEL_ENABLE_GPIO
+    string "Panel enable/backlight GPIO"
+    default "PC.7"
+    depends on BSP_USING_DISPLAY
+
+config BSP_DISPLAY_PANEL_ENABLE_LOW
+    bool "Panel enable GPIO is active low"
+    default n
+    depends on BSP_USING_DISPLAY
+
+config AIC_FB_RESERVED_SIZE
+    hex "DDR reserved for framebuffers"
+    default 0x2000000 if BSP_USING_DISPLAY
+    default 0x0
+    help
+        The reserved region is taken from the top of the non-bootloader
+        DDR area, below the 8 MB Bootloader reserve.  It is not part of the
+        RT-Thread heap.
+
+config BSP_USING_LVGL
+    bool "Enable lvgl-aic-standalone (external LVGL 9.6)"
+    default n
+    depends on BSP_USING_DISPLAY
+    help
+        Builds the external lvgl-aic-standalone component.  The BSP does
+        not contain the LVGL runtime, display/input port or demo.  Set
+        LVGL_AIC_DIR and LVGL_DIR before building.
+
+if BSP_USING_LVGL
+config LVGL_AIC_USE_D21X_BACKEND
+    bool "Use D21x double-buffer/PAN/VSync backend"
+    default y
+
+config LVGL_AIC_USE_GE_COPY
+    bool "Use GE Normal bitblt for the LVGL frame copy"
+    default n
+    depends on LVGL_AIC_USE_D21X_BACKEND && BSP_USING_GE
+    help
+        Software frame copy is the validated baseline.  Enable this only
+        after the software-rendered display path has been verified.
+
+config LVGL_AIC_USE_TOUCH
+    bool "Use an RT-Thread touch device as LVGL pointer input"
+    default y
+    depends on BSP_USING_TOUCH_GT911
+
+if LVGL_AIC_USE_TOUCH
+config LVGL_AIC_TOUCH_DEVICE
+    string "LVGL touch device name"
+    default "gt911"
+
+config LVGL_AIC_TOUCH_SWAP_XY
+    bool "Swap LVGL touch X/Y axes"
+    default n
+
+config LVGL_AIC_TOUCH_X_FLIP
+    bool "Flip LVGL touch X axis"
+    default n
+
+config LVGL_AIC_TOUCH_Y_FLIP
+    bool "Flip LVGL touch Y axis"
+    default n
+endif
+
+config LVGL_AIC_DEMO_SMOKE
+    bool "Build the D213 LVGL smoke demo"
+    default y
+
+config LVGL_AIC_UI_STACK_SIZE
+    int "LVGL UI thread stack size"
+    default 32768
+
+config LVGL_AIC_UI_PRIORITY
+    int "LVGL UI thread priority"
+    default 15
+
+config LVGL_AIC_UI_PERIOD_MS
+    int "LVGL UI loop period (ms)"
+    default 10
+endif
+
+endmenu
+
+config BSP_USING_GE
+    bool "Enable GE Normal mode (fill/blit/scale/blend/rotate)"
+    default y
+    help
+        Enables the vendor GE Normal-mode HAL.  The GE CMD queue is not
+        used on D21x.
+
+menu "QSPI / SPI NAND"
+
+config BSP_USING_QSPI0
+    bool "Enable QSPI0 (SPI NAND bus)"
+    default n
+    help
+        Enable D21x QSPI0 controller as RT-Thread QSPI bus "qspi0"
+        for SPI NAND. Pins PB.0..PB.5 are QSPI0 (PB.2 = CS).
+        This bus is mutually exclusive with SDMC0 on PB.0..PB.11
+        (function 2).  This port implements the single-line
+        synchronous CPU FIFO path only; DMA, interrupts and the
+        multi-line command/data phases are future work.
+
+    select RT_USING_SPI
+    select RT_USING_QSPI
+
+config BSP_QSPI0_FREQ
+    int "QSPI0 default bus frequency (Hz)"
+    default 24000000
+    range 100000 200000000
+    depends on BSP_USING_QSPI0
+    help
+        Requested SPI clock.  The driver selects the closest divider
+        from the QSPI0 input clock and prints the actual rate at boot.
+
+config BSP_QSPI0_INPUT_HZ
+    int "QSPI0 input clock from the bootloader (Hz)"
+    default 100000000
+    range 1000000 300000000
+    depends on BSP_USING_QSPI0
+    help
+        The ArtInChip bootloader programs the QSPI0 parent and CMU
+        divider.  This BSP does not reconfigure the SoC clock tree;
+        this value is the assumed input clock used for divider
+        selection.  Measure QSPI0_CLK if the board bootloader uses a
+        different rate and override this value.
+
+config BSP_USING_SPINAND_MTD_NAND
+    bool "Enable SPI NAND MTD"
+    default n
+    depends on BSP_USING_QSPI0
+    select RT_USING_MTD_NAND
+    select RT_USING_DEVICE_OPS
+    help
+        Register SPI NAND MTD partitions via
+        rt_mtd_nand_register_device.  read_id / read_page /
+        check_block and the write_page / move_page / erase_block /
+        mark_badblock path are implemented for the hardware-verified
+        W25N01GV geometry.
+        The controller uses the RT-Thread QSPI bus "qspi0" and
+        attaches device "spinand0".  Partitions are generated from
+        pack/image_cfg.json at build time.
+
+config BSP_SPINAND_READONLY
+    bool "Register SPI NAND image partitions as read-only MTD"
+    default y
+    depends on BSP_USING_SPINAND_MTD_NAND
+    help
+        Keep the partitions declared in pack/image_cfg.json read-only:
+        write_page / move_page / erase_block / mark_badblock return
+        -RT_EPERM without touching the flash.  Disable this only when
+        the image layout, bad-block handling and power-loss behaviour
+        have been validated for the target product.
+
+config BSP_SPINAND_SCRATCH_MTD
+    bool "Register the unallocated NAND tail as writable scratch MTD"
+    default n
+    depends on BSP_USING_SPINAND_MTD_NAND
+    help
+        Register "nand_scratch" over the physical blocks that no
+        partition in pack/image_cfg.json claims.  The device uses the
+        real program/erase path and is the safe target for destructive
+        write tests and filesystem bring-up; the boot chain cannot be
+        reached through it.  With the demo128 layout this is the
+        108-block tail after the refresh partition.
+
+menuconfig BSP_SPINAND_RODATA_FS
+    bool "Mount the rodata FAT image read-only at /rodata"
+    default n
+    depends on BSP_USING_SPINAND_MTD_NAND && BSP_SPINAND_READONLY
+    depends on RT_USING_DFS && !RT_USING_DFS_V2
+    select RT_USING_DFS_ELMFAT
+    select RT_USING_DFS_ROMFS
+    select RT_USING_DFS_ROMFS_USER_ROOT
+    help
+        The vendor image contains a FAT filesystem in the 'rodata'
+        partition.  This option exposes that partition through a
+        read-only block device and mounts the FAT image at /rodata.
+
+        DFS v1 must be enabled in the RT-Thread DFS menu first; this
+        option then selects the elm-chan FAT and romfs components.
+
+        The block device has no write path and the underlying MTD
+        partition is registered read-only, so the mounted filesystem
+        cannot modify the image.  Mounting simply fails (and the image
+        is left untouched) if 'rodata' is not FAT or has an
+        uncorrectable ECC error.
+
+        A small romfs is mounted at "/" to provide the /rodata mount
+        point.  /nand and /dev are provided by the same romfs.
+
+menuconfig BSP_SPINAND_LITTLEFS
+    bool "LittleFS on the writable nand_scratch tail (at /nand)"
+    default n
+    depends on BSP_SPINAND_SCRATCH_MTD
+    depends on RT_USING_DFS && !RT_USING_DFS_V2
+    select RT_USING_DFS_ROMFS
+    select RT_USING_DFS_ROMFS_USER_ROOT
+    help
+        Formats and mounts the unallocated NAND tail as a LittleFS
+        volume at /nand.  Only this scratch area is written; the
+        declared image partitions stay read-only.
+
+        DFS v1 must be enabled in the RT-Thread DFS menu first; this
+        option then selects the romfs used for the mount points.
+
+        The BSP keeps a persistent bad-block table on two of the first
+        good scratch blocks.  LittleFS blocks are mapped through it, and
+        a block that fails program or erase is replaced from a small
+        spare pool.  The logical-to-physical map is preserved across
+        reboots, so LittleFS never sees a block change identity.
+
+        The romfs mounted at "/" provides the /nand mount point.
+
+if BSP_SPINAND_LITTLEFS
+
+config BSP_SPINAND_LITTLEFS_AUTOFORMAT
+    bool "Format nand_scratch when it contains no LittleFS volume"
+    default y
+    help
+        With this option the first mount of a blank scratch area (or of
+        an area whose bad-block table had to be rebuilt) formats the
+        volume and mounts it.  Formatting erases only nand_scratch.
+
+config BSP_SPINAND_LITTLEFS_SPARE_BLOCKS
+    int "Spare blocks reserved for bad-block replacement"
+    range 1 16
+    default 4
+    help
+        Good scratch blocks held back from LittleFS and used to replace
+        blocks that fail erase or program at run time.
+
+endif
+
+endmenu
+
+menu "DMA"
+
+config BSP_USING_DMA
+    bool "Enable the cache-coherent DMA buffer helper"
+    default y
+    help
+        Provides aic_dma_alloc()/aic_dma_free() and the D-Cache clean
+        and invalidate wrappers used by non-coherent DMA drivers.  The
+        D213 has no MMU, so CPU addresses are also DMA addresses; only
+        cache-line alignment and maintenance are needed.
+
+config BSP_USING_DMAC
+    bool "Enable the external DMA controller (8 channels)"
+    default n
+    select BSP_USING_DMA
+    help
+        Enables the SoC DMA controller at 0x10000000 and its channel API
+        (memory-to-memory, memory-to-device and cyclic transfers).  It is
+        the shared foundation for UART TX, audio playback and SPI/I2S DMA.
+        The "dma_test" command copies a buffer with the controller for
+        on-target validation.
+
+endmenu
+
+menu "Audio"
+
+config BSP_USING_AUDIO
+    bool "Enable audio codec playback (SPK on PE.11)"
+    default n
+    select BSP_USING_DMAC
+    select BSP_USING_GPIO
+    select RT_USING_AUDIO
+    help
+        Enables the D21x audio codec playback path as the standard
+        RT-Thread audio device "sound0".  The cyclic DMA engine feeds the
+        codec TX FIFO; the speaker output is the PWM/DSPK path, not I2S.
+        On the D213ECV-DEMO-V4-0 SPK1 is routed to PE.11 and the speaker
+        amplifier is enabled through PA_SHDN (PA.7, active low).
+
+        The "audio_tone" command plays a sine tone for manual checks.
+        Only playback is implemented here; digital microphone capture is
+        the separate BSP_USING_DMIC option.
+
+config BSP_USING_DMIC
+    bool "Enable DMIC capture (PE.12/PE.13)"
+    default n
+    select BSP_USING_DMAC
+    select RT_USING_AUDIO
+    help
+        Enables the D21x digital-microphone capture path as the
+        standard RT-Thread audio device "dmic0" (read-only).  The codec
+        RX decimator feeds the DMIC RX FIFO and cyclic DMA moves each
+        period into the audio record pipe drained by rt_device_read().
+
+        On the D213ECV-DEMO-V4-0 the DMIC clock/data pins are PE.12 and
+        PE.13 (function 4).  The "dmic_record" command captures for a
+        number of milliseconds and prints min/max/mean/RMS levels.
+
+        Playback and capture share one codec module clock, so they are
+        mutually exclusive: starting one stream while the other runs
+        stops the other stream first, and changing the sample
+        rate/channels of a running stream is refused with -RT_EBUSY.
+
+choice
+    prompt "Speaker output"
+    depends on BSP_USING_AUDIO
+    default BSP_AUDIO_SPK1
+
+    config BSP_AUDIO_SPK0
+        bool "SPK0"
+
+    config BSP_AUDIO_SPK1
+        bool "SPK1"
+endchoice
+
+config BSP_AUDIO_PA_GPIO
+    string "Speaker amplifier shutdown pin (active low)"
+    depends on BSP_USING_AUDIO
+    default "PA.7"
+    help
+        Pin name in the PA.n form.  The driver drives it low to enable
+        the amplifier and high to shut it down.
+
+endmenu
+
+menu "SD/MMC (SDMC)"
+
+config BSP_USING_SDMC1
+    bool "Enable SDMC1 SD card slot (PC.0..PC.6)"
+    default n
+    depends on !BSP_USING_PWM
+    select RT_USING_SDIO
+    select BSP_USING_DMA
+    help
+        Enables the D213ECV-DEMO-V4-0 SD card slot through the standard
+        RT-Thread MMCSD/block stack.  The block device is named "sd0".
+
+        SDMC1 uses PC.0..PC.6 in function 2, which is the same pin group
+        as PWM0..PWM3 on this board, so PWM must be disabled while SDMC1
+        is enabled.  PC.7 (panel enable) is not used by SDMC1.
+
+        Command and data completion are polled.  The internal DMA engine
+        is used for bulk transfers; the SDIO interrupt source is routed
+        to the PLIC for SDIO function drivers.  There is no hot-plug
+        thread: the card is detected at boot; use "sd_rescan" after
+        inserting a card while the system is up.
+
+config BSP_USING_SDMC2
+    bool "Enable SDMC2 SDIO slot (PF.0..PF.5)"
+    default n
+    select RT_USING_SDIO
+    select BSP_USING_DMA
+    select BSP_USING_GPIO
+    help
+        Enables the second SDMC controller on PF.0..PF.5 in function 2.
+        On the D213ECV-DEMO-V4-0 carplay board this slot carries the
+        RTL8733BS Wi-Fi/BT combo module, so the driver is SDIO-only:
+        there is no block device and no SD card support.
+
+        The module's WL_REG_ON pin is driven high before the controller
+        probes the slot; the GPIO is configured with
+        BSP_SDMC2_POWER_GPIO.  The Wi-Fi/BT function driver itself is
+        not part of this BSP; the standard RT-Thread SDIO stack
+        (CMD52/CMD53, CCCR/FBR/CIS and attach_irq) is what this port
+        provides.
+
+if BSP_USING_SDMC1 || BSP_USING_SDMC2
+
+config BSP_SDMC_USE_IDMA
+    bool "Use the SDMC internal DMA engine"
+    default y
+    help
+        Transfer data with the controller's internal DMA engine and use
+        the CPU FIFO only for small, word-aligned requests or when the
+        aligned bounce buffer cannot be allocated.  The runtime command
+        "sd_dma 0" switches back to FIFO for comparison and debugging.
+
+config BSP_SDMC_TRACE
+    bool "Trace SDIO command traffic (CMD52/CMD53)"
+    default n
+    help
+        Print the argument and the R5 payload of every CMD52/CMD53 issued
+        on the SDIO slot.  Only useful while bringing up a new module;
+        it is off by default because it prints on every transfer.
+
+endif
+
+if BSP_USING_SDMC1
+
+config BSP_SDCARD_AUTOMOUNT
+    bool "Mount the card's FatFS partition at boot"
+    default n
+    select RT_USING_DFS
+    select RT_USING_DFS_ELMFAT
+    help
+        Tries to mount the card as an elm-chan FAT filesystem at the
+        configured mount point.  Mounting never formats the card; an
+        unformatted or non-FAT card is left untouched and reported.
+
+config BSP_SDCARD_MOUNT_POINT
+    string "Mount point"
+    default "/"
+    depends on BSP_SDCARD_AUTOMOUNT
+    help
+        Mount point for the SD card.  The default "/" works without a
+        separate root filesystem.  Use a subdirectory only if a root
+        filesystem already provides that directory.
+
+endif
+
+if BSP_USING_SDMC2
+
+config BSP_SDMC2_POWER_GPIO
+    string "Module power-enable GPIO (empty to skip)"
+    default "PD.1"
+    help
+        Pin driven low then high before the controller probes the SDIO
+        slot.  On the carplay board this is WL_REG_ON on PD.1.  Leave
+        empty when the module is always powered.
+
+config BSP_SDMC2_POWER_DELAY_MS
+    int "Delay after power-on (ms)"
+    default 50
+    depends on BSP_SDMC2_POWER_GPIO != ""
+    help
+        Time allowed for the module supply and reference clock to
+        settle before CMD5 is sent.
+
+config BSP_SDMC2_BT_POWER_GPIO
+    string "Combo-module BT power-enable GPIO (empty to skip)"
+    default "PD.3"
+    help
+        Combo modules keep the WLAN and BT enables on separate pins.
+        The vendor board setup asserts both before the SDIO slot is
+        probed, so this port does the same: the pin is driven high once,
+        together with the WLAN power enable.  Leave empty when the
+        module has no separate BT enable.
+
+endif
+
+endmenu
+
+menu "Ethernet"
+
+menuconfig BSP_USING_GMAC0
+    bool "Enable GMAC0 RMII Ethernet (PE.0..PE.9)"
+    default n
+    select RT_USING_LWIP
+    select RT_USING_DEVICE_IPC
+    help
+        Enables the D21x GMAC0 controller in RMII mode with the vendor
+        MAC/PHY HAL and the RT-Thread lwIP ethernetif port.  The device is
+        registered as netif "e0"; DHCP is started automatically when
+        RT_LWIP_DHCP is enabled.
+
+        The board uses an RTL8201F PHY at address 1: RMII data on
+        PE.0..PE.5/PE.7..PE.9, PHY-supplied 50 MHz REF_CLK, PE.6 as the
+        reset GPIO, and PE.10 (CLK_OUT2, 25 MHz) as the PHY XTAL clock.
+        Without CLK_OUT2 the PHY does not respond on MDIO.  lwIP itself
+        and its version are configured in the RT-Thread Network menu;
+        Kconfig cannot select a choice symbol, so set lwIP v2.1.2
+        explicitly (configs/d213-eth-utest.config does).
+
+if BSP_USING_GMAC0
+
+config BSP_GMAC0_PHYADDR
+    int "PHY address"
+    default 1
+
+config BSP_GMAC0_PHYRST_GPIO
+    string "PHY reset GPIO (empty to skip)"
+    default "PE.6"
+
+config BSP_GMAC0_MACADDR
+    string "MAC address (12 hex digits)"
+    default "020000000001"
+    help
+        Locally administered address used for GMAC0.  The board has no
+        EEPROM for a factory MAC address.
+
+endif
+
+endmenu
+
+menu "USB"
+
+config AIC_USING_USB0_HOST
+    bool
+    default BSP_USING_USB0_HOST
+
+config AIC_USING_USB1_HOST
+    bool
+    default BSP_USING_USB1_HOST
+
+menuconfig BSP_USING_USB0_HOST
+    bool "USB0 host (EHCI + OHCI companion, CherryUSB)"
+    default n
+    select RT_USING_CHERRYUSB
+    select RT_CHERRYUSB_HOST
+    select RT_CHERRYUSB_HOST_MSC
+    select RT_USING_CACHE
+    select RT_USING_TIMER_SOFT
+    select RT_USING_DFS
+    select RT_USING_DFS_ELMFAT
+    help
+        Enables the D213 USB0 port as an EHCI high-speed host with the
+        OHCI companion controller for low/full-speed devices, using the
+        CherryUSB stack from components/drivers/usb/cherryusb.
+
+        Kconfig cannot select a choice symbol, so after enabling this
+        option the USB host IP must also be set to "ehci_aic" in the
+        CherryUSB menu (CherryUSB -> Enable usb host mode -> Select usb
+        host ip).  The configs/d213-usb-utest.config file already does
+        that.
+
+        Pinmux: PO.0/PO.1 function 2.  PHY role: syscfg USB0_CFG.DRD_MODE
+        is cleared by the AIC glue; the reference resistor is calibrated
+        by ../libraries/soc/d21x/drivers/drv_usb.c.
+
+menuconfig BSP_USING_USB1_HOST
+    bool "USB1 host (EHCI + OHCI companion, CherryUSB)"
+    default n
+    select RT_USING_CHERRYUSB
+    select RT_CHERRYUSB_HOST
+    select RT_CHERRYUSB_HOST_MSC
+    select RT_USING_CACHE
+    select RT_USING_TIMER_SOFT
+    select RT_USING_DFS
+    select RT_USING_DFS_ELMFAT
+    help
+        Enables the D213 USB1 port as an EHCI high-speed host with the
+        OHCI companion controller.  USB1 is host-only on D21x, so no
+        PHY role switch is needed.  The CherryUSB choice and mount
+        points are the same as for USB0.
+
+        Pinmux: PO.2/PO.3 function 2.  Enable only one of USB0/USB1 host:
+        CONFIG_USBHOST_MAX_BUS is 1 in board/usb_config.h, so a build
+        with both enabled would not enumerate the second bus.
+
+menuconfig BSP_USING_USB0_DEVICE
+    bool "USB0 device (CDC ACM serial, CherryUSB)"
+    default n
+    depends on !BSP_USING_USB0_HOST
+    select RT_USING_CHERRYUSB
+    select RT_CHERRYUSB_DEVICE
+    select RT_CHERRYUSB_DEVICE_CDC_ACM
+    select RT_CHERRYUSB_DEVICE_CDC_ACM_CHARDEV
+    select RT_USING_CACHE
+    select RT_USING_TIMER_SOFT
+    help
+        Enables the D213 USB0 port as a high-speed device exposing one
+        CDC ACM function.  Requires the official CherryUSB AIC port API
+        update (a0054795c440) to be synchronized into RT-Thread first;
+        the BSP does not patch the common USB component.
+        board/usb_device.c registers it as the
+        RT-Thread character device "usb-acm0" and provides
+        "usb_dev_status" and "usb_dev_console on|off" MSH commands.
+
+        Kconfig cannot select a choice symbol, so after enabling this
+        option the device IP and speed must also be set in the CherryUSB
+        menu: CherryUSB -> Enable usb device mode -> Select usb device
+        ip = "aic", Select usb device speed = "HS".  The
+        configs/d213-usbdev-utest.config file already does that.
+
+        USB0 is shared with the host role and with the BROM upgrade
+        port; enable either BSP_USING_USB0_HOST or BSP_USING_USB0_DEVICE,
+        never both.  Pinmux: PO.0/PO.1 function 2; the PHY role bit is
+        set by usb_dc_low_level_init() in the CherryUSB AIC port.
+
+endmenu
+
+config BSP_USING_VE
+    bool "Enable D213 Video Engine v1.0"
+    select RT_USING_MUTEX
+    select RT_USING_SEMAPHORE
+    default n
+    help
+        Register the ve device and provide exclusive engine transactions,
+        bounded IRQ waits, reset and clock control. Codec implementations
+        belong to external multimedia libraries.
+
+
+endmenu
