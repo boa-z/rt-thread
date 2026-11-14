@@ -256,6 +256,12 @@ python ..\tools\d213_mk_firmware.py --sdk $env:AIC_SDK_DIR `
 
 不会写设备。
 
+2 KiB page SPI NAND 的 SPL 页表最多 202 项，其中一项留给页表本身，
+所以 `bootloader.aic` 最多 201 页（411,648 bytes，即 402 KiB）。
+该限制针对 PBP、AIC 头、资源和 loader 拼接后的文件，而非裸
+`bootloader.bin`；增大 SPL 分区不能绕过页表容量。配置使用 `402k`
+上限，打包脚本另行检查页表容量；超限的最终 `.img` 不予交付。
+
 ### 验证
 
 SDK 工具层的 `mkenvimage` 测试（如果系统安装了原生 `mkenvimage`，会额外做

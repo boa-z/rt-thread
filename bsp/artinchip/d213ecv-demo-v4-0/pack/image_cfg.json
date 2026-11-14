@@ -109,7 +109,7 @@
         "concatenate": {
             "bootloader.aic": {
                 "files": ["pbp_ext.aic", "loader.aic"],
-                "max_size": "404k"
+                "max_size": "402k"
             }
         },
         "uboot_env": {

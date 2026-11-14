@@ -50,6 +50,18 @@ def run(cmd, cwd=None, env=None):
         sys.exit("command failed with exit code {}".format(ret))
 
 
+def validate_spl_size(path):
+    # nand_fwc_spl.c: ceil(SPL bytes / NAND page size) + one table page.
+    # This D213 package targets 2 KiB NAND pages and a 202-entry table.
+    size = os.path.getsize(path)
+    entries = (size + 2047) // 2048 + 1
+    if size == 0 or entries > 202:
+        raise ValueError("SPL {} bytes requires {} page-table entries; "
+                         "maximum is 202 (411648 payload bytes)".format(
+                             size, entries))
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", default=find_default_sdk(),
@@ -125,6 +137,15 @@ def main():
         out, "d21x_d213_demo128_page_2k_block_128k_v1.0.0.img")
     if not os.path.isfile(image):
         sys.exit("expected firmware image was not generated: " + image)
+
+    # Older SDK packers may ignore concatenate.max_size. Do not deliver an
+    # image whose SPL the NAND upgrade path cannot represent.
+    try:
+        entries = validate_spl_size(os.path.join(out, "bootloader.aic"))
+    except (OSError, ValueError) as exc:
+        os.remove(image)
+        sys.exit("invalid D213 NAND SPL: " + str(exc))
+    print("SPL page-table entries: {}/202".format(entries))
 
     print("")
     print("Firmware output: {}".format(out))
