@@ -39,8 +39,13 @@ void riscv_timer_set_compare(rt_uint64_t value)
     volatile rt_uint32_t *cmp =
         (volatile rt_uint32_t *)(uintptr_t)AIC_CLINT_MTIMECMP;
 
+    /* Avoid a transient expired comparator while updating the low word. */
+    cmp[1] = RT_UINT32_MAX;
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
     cmp[0] = (rt_uint32_t)value;
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
     cmp[1] = (rt_uint32_t)(value >> 32);
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
 }
 
 rt_uint64_t rt_hw_get_clock_timer_freq(void)

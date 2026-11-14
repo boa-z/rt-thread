@@ -51,6 +51,7 @@ void rt_hw_board_init(void)
     riscv_isa_ext_set(C);
 
     aic_cpu_init();
+    riscv_timer_set_frequency(BSP_CLINT_FREQ);
 
     /* Peripheral gates and UART0 pinmux.  The CPU/PLL tree is set up by
      * the ArtInChip bootloader before this image is entered. */
@@ -61,10 +62,9 @@ void rt_hw_board_init(void)
     rt_system_heap_init((void *)&__heap_start, (void *)&__heap_end);
 #endif
 
-    rt_hw_interrupt_init();
     aic_plic_quirk_init();
+    rt_hw_interrupt_init();
 
-    riscv_timer_set_frequency(BSP_CLINT_FREQ);
     rt_hw_tick_init();
 
     rt_hw_serial_init();

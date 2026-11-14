@@ -139,7 +139,7 @@ static rt_ssize_t aic_gpio_read(struct rt_device *device, rt_base_t pin)
 
 static void aic_gpio_group_isr(int irq, void *param)
 {
-    rt_base_t group = irq - GPIO_IRQn;
+    rt_base_t group = irq - IRQ_PLIC(GPIO_IRQn);
     unsigned int stat = 0;
     unsigned int en = 0;
     unsigned int pending;
