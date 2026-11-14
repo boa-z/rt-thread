@@ -199,7 +199,7 @@ hal/psadc, drv/psadc
 
 ## 20.8 第三方/工具
 
-`tools/mk_firmware.py` 调用本地 Luban-Lite 的 Python 工具。这些工具**不复制到本仓库**，由使用者在打包时提供。它们的许可证以 Luban-Lite 仓库为准。
+`../tools/d213_mk_firmware.py` 调用本地 Luban-Lite 的 Python 工具。这些工具**不复制到本仓库**，由使用者在打包时提供。它们的许可证以 Luban-Lite 仓库为准。
 
 本 BSP 另外逐字节复制了 LittleFS v2.5（`littlefs/lfs.c`、`lfs.h`、
 `lfs_util.c`、`lfs_util.h`、`LICENSE.md`），来源为上游 littlefs

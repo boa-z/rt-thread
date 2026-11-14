@@ -52,7 +52,7 @@ application/demo
 - `bsp/artinchip/libraries/`
 - `bsp/artinchip/d213ecv-demo-v4-0/applications/` 中最小自检/外设测试
 - `bsp/artinchip/d213ecv-demo-v4-0/pack/` 的配置模板
-- `bsp/artinchip/d213ecv-demo-v4-0/tools/mk_firmware.py`
+- `bsp/artinchip/tools/d213_mk_firmware.py`
 - `bsp/artinchip/d213ecv-demo-v4-0/SConstruct`、`SConscript`、`Kconfig`、
   `rtconfig.py`、`.config`、`rtconfig.h`
 - 文档、许可证和来源说明

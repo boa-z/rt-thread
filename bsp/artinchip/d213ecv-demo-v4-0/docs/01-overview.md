@@ -155,7 +155,7 @@ bsp/artinchip/
     ├── lvgl/                       # 外部 lvgl-aic-standalone 集成入口
     ├── docs/                       # 本文档体系
     ├── pack/                       # 分区/镜像打包配置
-    └── tools/mk_firmware.py        # FIT/ITB/IMG 打包脚本
+    └── tools/                       # 板级辅助脚本；打包见 ../tools/d213_mk_firmware.py
 ```
 
 ## 1.5 工具链与环境
@@ -228,7 +228,7 @@ scons -j8
 
 ```sh
 export AIC_SDK_DIR=/path/to/luban-lite
-python tools/mk_firmware.py --sdk "$AIC_SDK_DIR" \
+python ../tools/d213_mk_firmware.py --sdk "$AIC_SDK_DIR" \
     --elf rtthread.elf --out images
 ```
 

@@ -238,7 +238,7 @@ uv pip install pycryptodomex
 回到 BSP 目录后打包：
 
 ```sh
-python tools/mk_firmware.py --sdk /path/to/luban-lite \
+python ../tools/d213_mk_firmware.py --sdk /path/to/luban-lite \
     --elf rtthread.elf --out images
 ```
 
@@ -249,7 +249,7 @@ python tools/mk_firmware.py --sdk /path/to/luban-lite \
 d213_demo128_page_2k_block_128k_v1.0.0.img
 ```
 
-`mk_firmware.py` 使用运行它的 Python 解释器。未激活虚拟环境时，可通过
+`d213_mk_firmware.py` 使用运行它的 Python 解释器。未激活虚拟环境时，可通过
 `--python` 指定。脚本不会写设备。
 
 ### 4.3 烧录

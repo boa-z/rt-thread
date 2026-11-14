@@ -112,3 +112,13 @@ HIL 工具默认只读；烧录类操作需要显式确认板型，且不会擦�
 BSP 自有代码使用 Apache-2.0。`libraries/` 中的原厂 HAL 和头文件来自
 ArtInChip Luban-Lite（Apache-2.0），保留原始版权声明。RT-Thread 内核与
 组件遵循仓库根目录的 `LICENSE`。
+
+## 开发工具与分支
+
+D213 构建、检查及打包辅助工具集中在 `tools/`：
+`check_base_config.py --bsp <基础 BSP 路径>` 检查上游候选配置；
+`d213_mk_firmware.py --elf <ELF> --sdk <SDK> --out <目录>` 打包上板镜像。
+这些开发工具不随基础 BSP 提交上游；上游仅保留原生构建必需文件。
+
+分支统一使用 `bsp/artinchip-d213-*`：`bsp/artinchip-d213-dev` 保留完整开发功能，
+`bsp/artinchip-d213-base` 用于首个最小 BSP 上游候选。

@@ -218,11 +218,11 @@ uv pip install pycryptodomex
 仅在找不到时回退到 SDK 自带副本。`gmssl`、`asn1crypto`、`fdt` 等纯 Python
 依赖仍由 SDK 提供。
 
-`mk_firmware.py` 默认使用运行它的解释器（即已激活的 venv），不会自动选择
+`d213_mk_firmware.py` 默认使用运行它的解释器（即已激活的 venv），不会自动选择
 SDK 内的 `tools/env/tools/Python38/python3.exe`。如果未激活 venv：
 
 ```sh
-python tools/mk_firmware.py --python /path/to/rt-thread/.venv/bin/python ...
+python ../tools/d213_mk_firmware.py --python /path/to/rt-thread/.venv/bin/python ...
 ```
 
 ### 命令
@@ -231,7 +231,7 @@ macOS / Linux：
 
 ```sh
 export AIC_SDK_DIR=/path/to/luban-lite
-python tools/mk_firmware.py \
+python ../tools/d213_mk_firmware.py \
     --sdk "$AIC_SDK_DIR" \
     --elf rtthread.elf \
     --out images
@@ -241,7 +241,7 @@ Windows PowerShell：
 
 ```powershell
 $env:AIC_SDK_DIR = "C:\path\to\luban-lite"
-python tools\mk_firmware.py --sdk $env:AIC_SDK_DIR `
+python ..\tools\d213_mk_firmware.py --sdk $env:AIC_SDK_DIR `
     --elf rtthread.elf --out images
 ```
 
@@ -337,7 +337,7 @@ BSP 不修改这些职责。
 | `undefined reference to fabs` | 浮点库未链接 | 确认 GCC 内建/`-lm` |
 | 链接脚本断言失败 | 堆与 Bootloader 重叠 | 检查 `AIC_BOOTLOADER_RESERVED_SIZE` |
 | 打包脚本找不到 `mk_image.py` | SDK 路径错误 | 检查 `--sdk` |
-| `Permission denied ... Python38/python3.exe` | 旧脚本在非 Windows 主机选择了 SDK 内置 Windows Python | 使用当前脚本；默认即为运行 `mk_firmware.py` 的 venv 解释器，也可显式传 `--python` |
+| `Permission denied ... Python38/python3.exe` | 旧脚本在非 Windows 主机选择了 SDK 内置 Windows Python | 使用当前脚本；默认即为运行 `d213_mk_firmware.py` 的 venv 解释器，也可显式传 `--python` |
 | `No module named Cryptodome` / `Cannot load native module 'Cryptodome...'` | 当前 venv 未安装 PyCryptodomeX，或误用了 SDK 自带的异构二进制 | `uv pip install pycryptodomex`，确认使用的是已激活的 venv |
 | `exec format error ... mkenvimage` | SDK 仍是旧版，调用了 Linux/Windows 原生 `mkenvimage` | 更新 SDK 工具层，确保存在 `tools/scripts/mkenvimage.py` |
 | `The environment file is too large...` | `env.txt` 超过 `env` 分区大小 | 减小环境变量内容或调整分区，二者需与 Bootloader 约定一致 |

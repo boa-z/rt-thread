@@ -50,7 +50,7 @@ macOS Apple Silicon（Python 3.13 + uv venv）已执行：
 
 ```sh
 AIC_SDK_DIR=/path/to/luban-lite \
-    python tools/mk_firmware.py --elf rtthread.elf --out images
+    python ../tools/d213_mk_firmware.py --elf rtthread.elf --out images
 ```
 
 检查结果：

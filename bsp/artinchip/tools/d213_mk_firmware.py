@@ -13,7 +13,7 @@
 # must be supplied by the user:
 #
 #   AIC_SDK_DIR=/path/to/luban-lite-jc \
-#       python bsp/artinchip/d213ecv-demo-v4-0/tools/mk_firmware.py \
+#       python bsp/artinchip/tools/d213_mk_firmware.py \
 #           --elf rtthread.elf
 #
 # The script never flashes a device.
@@ -25,7 +25,8 @@ import subprocess
 import sys
 
 
-BSP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BSP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "d213ecv-demo-v4-0")
 PACK_DIR = os.path.join(BSP_DIR, "pack")
 
 

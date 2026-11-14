@@ -544,7 +544,10 @@ def restore(path):
 
 
 def package(bsp, target, outdir, sdk, log):
-    script = os.path.join(bsp, "tools", "mk_firmware.py")
+    if os.path.normcase(os.path.abspath(bsp)) == os.path.normcase(D213_BSP):
+        script = os.path.join(ARTICHIP_DIR, "tools", "d213_mk_firmware.py")
+    else:
+        script = os.path.join(bsp, "tools", "mk_firmware.py")
     if not os.path.isfile(script):
         return "SKIP: no mk_firmware.py"
     if not sdk:
