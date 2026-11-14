@@ -1,0 +1,18 @@
+import os
+from building import *
+
+cwd = GetCurrentDir()
+objs = []
+items = os.listdir(cwd)
+
+for item in items:
+    # In a scons --dist tree the shared HAL is inside the project root.
+    # SConstruct builds it through libraries_path_prefix; including it here
+    # as well would link every HAL object twice.
+    if item == 'libraries':
+        continue
+    path = os.path.join(cwd, item)
+    if os.path.isfile(os.path.join(path, 'SConscript')):
+        objs += SConscript(os.path.join(item, 'SConscript'))
+
+Return('objs')

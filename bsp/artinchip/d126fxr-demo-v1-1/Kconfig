@@ -1,0 +1,34 @@
+mainmenu "RT-Thread Project Configuration"
+
+BSP_DIR := .
+
+RTT_DIR := ../../..
+
+PKGS_DIR := packages
+
+source "$(RTT_DIR)/Kconfig"
+osource "$(PKGS_DIR)/Kconfig"
+
+rsource "board/Kconfig"
+rsource "drivers/Kconfig"
+rsource "../libraries/Kconfig"
+
+config BOARD_ARTINCHIP_D126_DEMO124_NOR
+    bool
+    select ARCH_RISCV32
+    select ARCH_RISCV_FPU_S
+    select ARCH_RISCV_M_MODE
+    select RT_USING_RISCV_NEW_COMMON
+    select RT_USING_ADT
+    select RT_USING_ADT_BITMAP
+    select RT_USING_COMPONENTS_INIT
+    select RT_USING_USER_MAIN
+    default y
+
+config CPU_BASE
+    hex
+    default 0x20000000
+
+config AIC_PSRAM_SIZE
+    hex "PSRAM size"
+    default 0x800000

@@ -1,0 +1,28 @@
+from building import *
+
+import os
+import subprocess
+import sys
+
+cwd = GetCurrentDir()
+
+# Generate build/build_id_gen.h before anything is compiled.  The shared
+# generator is also used by the D213 BSP, and the HIL compares the value
+# recorded in manifest.json with the running firmware.
+gen = os.path.normpath(os.path.join(cwd, '..', '..', 'tools',
+                                    'gen_build_id.py'))
+build_dir = os.path.normpath(os.path.join(cwd, '..', 'build'))
+os.makedirs(build_dir, exist_ok=True)
+subprocess.check_call([
+    sys.executable, gen,
+    '--bsp-dir', os.path.normpath(os.path.join(cwd, '..')),
+    '--output', os.path.join(build_dir, 'build_id_gen.h'),
+    '--target', 'd126fxr-demo-v1-1',
+])
+
+src = Glob('*.c')
+CPPPATH = [cwd, build_dir]
+
+group = DefineGroup('Applications', src, depend=[''], CPPPATH=CPPPATH)
+
+Return('group')

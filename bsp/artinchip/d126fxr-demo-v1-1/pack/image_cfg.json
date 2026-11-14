@@ -1,0 +1,99 @@
+// Derived from ArtInChip Luban-Lite:
+// target/d12p/d126-demo124-nor/pack/image_cfg.json (Apache-2.0).
+// The bootloader load/entry values are filled in by tools/mk_firmware.py.
+{
+    "spi-nor": {
+        "size": "16m",
+        "partitions": {
+            "spl":        { "size": "512k" },
+            "env":        { "size": "128k" },
+            "env_r":      { "size": "128k" },
+            "userid":     { "size": "256k" },
+            "os":         { "size": "4m" },
+            "rodata":     { "size": "9m" },
+            "data":       { "size": "1m" }
+        }
+    },
+    "image": {
+        "info": {
+            "platform": "d12p",
+            "product": "d126-demo124-nor",
+            "version": "1.0.0",
+            "media": {
+                "type": "spi-nor",
+                "device_id": 0
+            }
+        },
+        "updater": {
+            "psram": {
+                "file": "usbupg-psram-init.aic",
+                "attr": ["required", "run"],
+                "ram": "0x30043000"
+            },
+            "spl": {
+                "file": "bootloader.aic",
+                "attr": ["required", "run"],
+                "ram": "__AIC_BOOTLOADER_LOAD__"
+            }
+        },
+        "target": {
+            "spl": {
+                "file": "bootloader.aic",
+                "attr": ["mtd", "required"],
+                "part": ["spl"]
+            },
+            "env": {
+                "file": "env.bin",
+                "attr": ["mtd", "optional"],
+                "part": ["env"]
+            },
+            "env_r": {
+                "file": "env.bin",
+                "attr": ["mtd", "optional"],
+                "part": ["env_r"]
+            },
+            "os": {
+                "file": "d12p_os.itb",
+                "attr": ["mtd", "required"],
+                "part": ["os"]
+            }
+        }
+    },
+    "pre-process": {
+        "aicimage": {
+            "usbupg-psram-init.aic": {
+                "head_ver": "0x00010001",
+                "resource": {
+                    "private2": "pbp_cfg.bin",
+                    "pbp2": "d12p.pbp"
+                }
+            },
+            "bootloader.aic": {
+                "head_ver": "0x00010001",
+                "loader": {
+                    "file": "bootloader.bin",
+                    "load address": "__AIC_BOOTLOADER_LOAD__",
+                    "entry point": "__AIC_BOOTLOADER_ENTRY__",
+                    "run in dram": "false"
+                },
+                "resource": {
+                    "private2": "pbp_cfg.bin",
+                    "pbp2": "d12p.pbp"
+                }
+            }
+        },
+        "uboot_env": {
+            "env.bin": {
+                "file": "env.txt",
+                "size": "4096",
+                "redundant": "enable"
+            }
+        },
+        "elf2itb": {
+            "d12p_os.itb": {
+                "elf": "rtthread.elf",
+                "hash": ["crc32", "md5"]
+            }
+        }
+    }
+}

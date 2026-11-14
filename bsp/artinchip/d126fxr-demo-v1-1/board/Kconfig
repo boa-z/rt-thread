@@ -1,0 +1,19 @@
+menu "D126 board options"
+
+config BSP_UART0_BAUD
+    int "UART0 console baudrate"
+    default 115200
+
+config BSP_CLINT_FREQ
+    int "CORET timer frequency (Hz)"
+    default 4000000
+
+config BSP_USING_SELFTEST
+    bool "Enable D126 msh self-test commands"
+    default y
+
+config BSP_USING_UTEST
+    bool "Enable D126 utest suite"
+    default n
+
+endmenu
