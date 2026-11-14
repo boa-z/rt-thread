@@ -1,0 +1,389 @@
+{
+  "schema": 1,
+  "sdk": {
+    "version": "1.3.3",
+    "layout": "luban-lite-1.x",
+    "snapshot_repository": "https://github.com/boa-z/luban-lite",
+    "snapshot_commit": "4060f85bd27a1eb555952921139b77cc41bdeb4e",
+    "upstream_repository": "https://gitee.com/artinchip/luban-lite"
+  },
+  "files": [
+    {
+      "local": "libraries/soc/d21x/hal/aic_hal_can.c",
+      "source": "bsp/artinchip/hal/can/aic_hal_can.c",
+      "mode": "exact",
+      "sha256": "5e7f0b9bd5bed63785aabb9a50003a782c5f360b63e66f9da25b952cda8ec843"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/aic_hal_gpio.c",
+      "source": "bsp/artinchip/hal/gpio/aic_hal_gpio.c",
+      "mode": "exact",
+      "sha256": "ff09a9a4f2a7291e5f1f3cd2ceacdf27df5be7b9d6f9b23344cb695ebe330e8f"
+    },
+    {
+      "local": "libraries/hal/i2c/hal_i2c.c",
+      "source": "bsp/artinchip/hal/i2c/hal_i2c.c",
+      "mode": "exact",
+      "sha256": "8b8aef0ce22e3af301115da3842cd81e8ff8ed176b0c85ac4c1d38e512479bae"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_pwm.c",
+      "source": "bsp/artinchip/hal/pwm/hal_pwm.c",
+      "mode": "exact",
+      "sha256": "075425fa9b34df3f92409f15e040098a8e235aa4ba0e3904eebefe71059b98ab"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_wdt.c",
+      "source": "bsp/artinchip/hal/wdt/hal_wdt.c",
+      "mode": "exact",
+      "sha256": "8ded48963da723a53fd15f509c6a7d7aff74e20082f8f36f1750932a1ce284c7"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_tsen.c",
+      "source": "bsp/artinchip/hal/tsen/hal_tsen.c",
+      "mode": "exact",
+      "sha256": "0912d4ba68b6e22c86277195929ea2191d5572c53a913f3fc2fc5641f15d2031"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_adcim.c",
+      "source": "bsp/artinchip/hal/adcim/hal_adcim.c",
+      "mode": "exact",
+      "sha256": "9c7d8aae955a6c1864e9257b793a72e500eb186c10ee7ac1f60f0431f2fad230"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_gpai.c",
+      "source": "bsp/artinchip/hal/gpai/hal_gpai.c",
+      "mode": "exact",
+      "sha256": "2903fadd2192048c41bbbede87bb75970deb8143bda8e13a4ed9f377db34dd1d"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_efuse.c",
+      "source": "bsp/artinchip/hal/efuse/hal_efuse.c",
+      "mode": "exact",
+      "sha256": "18dbd506b7460d7aa0469382108a4e57bd70886f521921530ccc1e570dd9e319"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_audio.c",
+      "source": "bsp/artinchip/hal/audio/hal_audio.c",
+      "mode": "exact",
+      "sha256": "e17d6d79ce3412ace98c3c966a06973ecc36f30cfbbab667ac0ee38b37f17b6c"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_ce.c",
+      "source": "bsp/artinchip/hal/ce/hal_ce.c",
+      "mode": "exact",
+      "sha256": "3be5683380dc5338a5b6c3c9dc10ac95af6fb4551a40ec7b6d12193599cf10fa"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_ce.h",
+      "source": "bsp/artinchip/include/hal/hal_ce.h",
+      "mode": "exact",
+      "sha256": "d92f17732f25bcd9f92959f218c794742d8e1045eb575e3efb9d1361be559634"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_audio.h",
+      "source": "bsp/artinchip/include/hal/hal_audio.h",
+      "mode": "exact",
+      "sha256": "9043cbdfd91c30145d92e526ac9a0bf2860742e82dc63ca009652e6f686f14f3"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_audio_reg.h",
+      "source": "bsp/artinchip/include/hal/hal_audio_reg.h",
+      "mode": "exact",
+      "sha256": "5c08f9674baab89d0d54d74b4918b2fcde26210b915aefc2c36eaab0c5f798b7"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_can.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_can.h",
+      "mode": "exact",
+      "sha256": "039d793e858521681be7709175ea9091020a2bf271da9f150925387a125d486a"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_gpio.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_gpio.h",
+      "mode": "exact",
+      "sha256": "fdc377411bced1d8a5bf92effbda0889bfea1ecd0b8bd38f7df518661ca307b3"
+    },
+    {
+      "local": "libraries/hal/i2c/hal_i2c.h",
+      "source": "bsp/artinchip/include/hal/hal_i2c.h",
+      "mode": "exact",
+      "sha256": "0c16b8d478e3aa6c685ea9b29e6f34857baecdc8f0787bd420c3ceccf3569ad7"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_pwm.h",
+      "source": "bsp/artinchip/include/hal/hal_pwm.h",
+      "mode": "exact",
+      "sha256": "9c97b278cd31680f58efe3bb2dac92b5942dcc1661e61732899b89b78ac487d0"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_wdt.h",
+      "source": "bsp/artinchip/include/hal/hal_wdt.h",
+      "mode": "exact",
+      "sha256": "06db1424a8003822bd9b848fea299f8e6ff08224bbd5bce6c0e7d1753c3b62d6"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_tsen.h",
+      "source": "bsp/artinchip/include/hal/hal_tsen.h",
+      "mode": "exact",
+      "sha256": "511251289e40ecc2d321fc93587b3e8133c69092e3ae692cd68d9d2a39c1d62c"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_adcim.h",
+      "source": "bsp/artinchip/include/hal/hal_adcim.h",
+      "mode": "exact",
+      "sha256": "3cadcc53bd28428e29a8321195c1d7c503d6dcdd0d6548143ac67f1c85f22069"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_gpai.h",
+      "source": "bsp/artinchip/include/hal/hal_gpai.h",
+      "mode": "exact",
+      "sha256": "53ab2376eafcfe06c7d77105194432cfe605cfc20eeed7fda6a4421de44bb016"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_efuse.h",
+      "source": "bsp/artinchip/include/hal/hal_efuse.h",
+      "mode": "exact",
+      "sha256": "01f3cf448b5fd2745b08f5462ef0455e39571fd0ddcb247c707bb0649bf2a999"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_iopoll.h",
+      "source": "bsp/common/include/aic_iopoll.h",
+      "mode": "exact",
+      "sha256": "0007dbefd9d7ce827c7436bda92847e0028c40405d9218afa4c65eef6ddd53f8"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_clk_id.h",
+      "source": "bsp/artinchip/sys/d21x/include/aic_clk_id.h",
+      "mode": "exact",
+      "sha256": "a7eafbf58b6dddb6d2dfc74cc9ce557b6f415d67a2a2a339387f7beb8fa25817"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_gpio_id.h",
+      "source": "bsp/artinchip/sys/d21x/include/aic_gpio_id.h",
+      "mode": "exact",
+      "sha256": "cbbd146ecc3f0923410e28b0e29983fdfd924e07c34027ea8c2b9c0ca3f1392e"
+    },
+    {
+      "local": "libraries/soc/d21x/display/aic_hal_de.c",
+      "source": "bsp/artinchip/hal/display/aic_hal_de.c",
+      "mode": "exact",
+      "sha256": "f2c77a70e74dae520323aef66c3ff85cce8cd21bf04f021f2d7bedf527d64b2b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_de.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_de.h",
+      "mode": "exact",
+      "sha256": "bb52869b895f5490723674555f395bebea5929206f4f4a302792a9c41836150b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_disp_reg_util.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_disp_reg_util.h",
+      "mode": "exact",
+      "sha256": "d566e884d2cf62f9ecb3d7c40cc145bbe4d27477cfde55b30b3ed3a47314482b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_lvds.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_lvds.h",
+      "mode": "exact",
+      "sha256": "adfae4943dcebc5cb65d6d2dfd6ec0c083687b749d64a950fd39c7f1986fcd5a"
+    },
+    {
+      "local": "libraries/soc/d21x/include/mpp_types.h",
+      "source": "bsp/artinchip/include/uapi/mpp_types.h",
+      "mode": "exact",
+      "sha256": "3ce10b8019efd4dd11667e6d4cb5c6f0f78b2f4439b12281a635afc89d075c03"
+    },
+    {
+      "local": "libraries/soc/d21x/ge/hal_ge_hw.c",
+      "source": "bsp/artinchip/hal/ge/hal_ge_hw.c",
+      "mode": "exact",
+      "sha256": "acf91456238ee625e95bc11ecf56ba0c2e359094994256ff3b92bedcd589450b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_ge_hw.h",
+      "source": "bsp/artinchip/hal/ge/hal_ge_hw.h",
+      "mode": "exact",
+      "sha256": "bb88bf7510d34386082a4b4a11445f1cf9af20f4a6797fdb4d5e4c2d2353759b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_ge_reg.h",
+      "source": "bsp/artinchip/hal/ge/hal_ge_reg.h",
+      "mode": "exact",
+      "sha256": "88e2effa6602b238076df2747fdde24d014e3528721659c5b86b33089b57350c"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_hal_ge.h",
+      "source": "bsp/artinchip/include/hal/aic_hal_ge.h",
+      "mode": "exact",
+      "sha256": "18d64f6b882390a55768f31baf10e5af6a913e3f90f1e09d5228baf5f54cec12"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_drv_ge.h",
+      "source": "bsp/artinchip/include/drv/aic_drv_ge.h",
+      "mode": "exact",
+      "sha256": "5f46a429776f6ef918691727fa11ebb65a812991073cf6478166bd91bb36e935"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_reset_id.h",
+      "source": "bsp/artinchip/sys/d21x/include/aic_reset_id.h",
+      "mode": "exact",
+      "sha256": "998461bfc83395cf7a1d37ba32860fbda29c5bef7b433a2a26bb6cf3bcf99a3e"
+    },
+    {
+      "local": "libraries/soc/d21x/include/artinchip_fb.h",
+      "source": "bsp/artinchip/include/uapi/artinchip_fb.h",
+      "mode": "adapted",
+      "sha256": "3e2b0f477b5da8a58ab82367e93e580173aa19672b2fabda5a8a3478739dc29e"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_rtc.c",
+      "source": "bsp/artinchip/hal/rtc/hal_rtc.c",
+      "mode": "adapted",
+      "sha256": "4db5a80f18c2a5e15ffc888d1122b96e8917a431d817f40e2c1df6473a229e12"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_rtc.h",
+      "source": "bsp/artinchip/include/hal/hal_rtc.h",
+      "mode": "adapted",
+      "sha256": "fa12acb168fefc3fd6e06dcb059c88f7668d35eb3957bda632ef4313fde1e5f3"
+    },
+    {
+      "local": "libraries/soc/d21x/ge/hal_ge_normal.c",
+      "source": "bsp/artinchip/hal/ge/hal_ge_normal.c",
+      "mode": "adapted",
+      "sha256": "3ef1812ea0bace26ada5ab408cab42f8627392fdff66f6a280e88051c356b010"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_sdmc.c",
+      "source": "bsp/artinchip/hal/sdmc/hal_sdmc.c",
+      "mode": "adapted",
+      "sha256": "825138a371714bea883bd5bf9e0c5afaf4e445976bcde50a01314d3fffe6bf3b"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_sdmc.h",
+      "source": "bsp/artinchip/include/hal/hal_sdmc.h",
+      "mode": "adapted",
+      "sha256": "8a30898e33a993f3a80364567172966f1a2d8e333abc5c060625b62fdc02a4fa"
+    },
+    {
+      "local": "libraries/soc/d21x/hal/hal_dma.c",
+      "source": "bsp/artinchip/hal/dma/hal_dma_def_v1x.c",
+      "mode": "adapted",
+      "sha256": "995384905f5569e8ad4ede1bbf3e88a89419fbf5bae526179eb77f75fec46bd3"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_dma.h",
+      "source": "bsp/artinchip/include/hal/hal_dma.h",
+      "mode": "adapted",
+      "sha256": "812506f58b20085765f234fb5a1f9c6512aaca45cee6aa939656bfb76f9050e5"
+    },
+    {
+      "local": "libraries/soc/d21x/include/hal_dma_reg.h",
+      "source": "bsp/artinchip/hal/dma/hal_dma_reg_v1x.h",
+      "mode": "adapted",
+      "sha256": "fc4129924ce285fbcceb08f230ce84088b5ddc903e22cff7350af29f2b4e2fc5"
+    },
+    {
+      "local": "libraries/soc/d21x/include/aic_dma_id.h",
+      "source": "bsp/artinchip/sys/d21x/include/aic_dma_id.h",
+      "mode": "adapted",
+      "sha256": "b1f39f5b2fb335f36db423ba9c6e010d0850f1b8de191fef16023d0c34a9a14b"
+    },
+    {
+      "source": "ReleaseNote.md",
+      "mode": "reference",
+      "sha256": "b05dc468593251a61de499906bc6535558155ce4a28546538db1243516695322"
+    },
+    {
+      "source": "CODEMAP-v2.md",
+      "mode": "reference",
+      "sha256": "8747e3a78f0664e7ed5a52a8197ff9ca95565604a2680332ea17560fe9fa5c5c"
+    },
+    {
+      "source": "bsp/artinchip/drv/display/Kconfig",
+      "mode": "reference",
+      "sha256": "3c79cf42a539bd9e0b3fb4f24e0d546c425353968c880bd07bb8e8567a3e7959"
+    },
+    {
+      "source": "bsp/artinchip/drv/display/drv_de_core.c",
+      "mode": "reference",
+      "sha256": "467284e6e2cb67156e5b949fb706a993940a50e3982600b64cfadeff6c4dbf14"
+    },
+    {
+      "source": "bsp/peripheral/spinand/spinand.c",
+      "mode": "reference",
+      "sha256": "6594cb62a734ef84504be4f66e085746c3080326a73b5da4b516910df15bdf6a"
+    },
+    {
+      "source": "bsp/peripheral/spinand/winbond.c",
+      "mode": "reference",
+      "sha256": "fb62a1b7e4ac9762aa04d3310e9197bbde9a9e484776914e287baa1a8d67d17a"
+    },
+    {
+      "source": "bsp/peripheral/spinand/inc/spinand.h",
+      "mode": "reference",
+      "sha256": "987406d726b814dd5e1328e671553f6c84471eedba3c1418a9e143857a05f86f"
+    },
+    {
+      "source": "bsp/artinchip/hal/qspi/hal_qspi_v1x.c",
+      "mode": "reference",
+      "sha256": "a791eefe7c79c06b066ab60b5ef60429ca8a00f9fa5b6dd9872f13c85802d4ca"
+    },
+    {
+      "source": "bsp/artinchip/hal/qspi/qspi_hw_v1.0.h",
+      "mode": "reference",
+      "sha256": "a0524f7ce447b9f4b85f738e5cf978fb2bafff21297a71ff85606bf40872b88d"
+    },
+    {
+      "source": "bsp/artinchip/drv/qspi/drv_qspi.c",
+      "mode": "reference",
+      "sha256": "b640e961c7b8684996f68208d8752a29a206da1901d884fc268e51393ac14551"
+    },
+    {
+      "source": "bsp/artinchip/hal/uart/aic_hal_uart.c",
+      "mode": "reference",
+      "sha256": "54572276d32588ff16325153ac94b0277cad59bdbe88ca981c4a1a14b220a85b"
+    },
+    {
+      "source": "bsp/artinchip/drv/uart/aic_drv_uart.c",
+      "mode": "reference",
+      "sha256": "3d7b7c72026ef2aff9624d83d866f6c1f902cae268c63a9471d8e5768d382d29"
+    },
+    {
+      "source": "bsp/peripheral/touch/gt911/src/gt911.c",
+      "mode": "reference",
+      "sha256": "a088c6c533bd33897f9185e3b73b80370b70a727ec42f461109fe5a4bcf505f1"
+    },
+    {
+      "source": "bsp/artinchip/drv/ve/aic_drv_ve.c",
+      "mode": "reference",
+      "sha256": "c508d15363d29275c8d531ff5b8c0bb4d70dd3d91a6501282d7c76db8515ac3b"
+    },
+    {
+      "source": "packages/artinchip/mpp/ve/common/ve.c",
+      "mode": "reference",
+      "sha256": "a9bd6f9d12e1af2028283249c0834450ec04f349e29c9a76d4d55976a6cbacef"
+    },
+    {
+      "source": "packages/artinchip/lvgl-ui/lvgl_v9/lv_drivers/lv_ge2d/lv_draw_ge2d.c",
+      "mode": "reference",
+      "sha256": "3665d5e21f1a942bc45f03de67264a0df6bf3e486bea9d7f3078e9292d1b1953"
+    },
+    {
+      "source": "target/d21x/demo128-nand/pack/image_cfg.json",
+      "mode": "reference",
+      "sha256": "23dbd761b2215f2e8ca85fa4d0689e37860f49a3feaed31d46ec05de6721fc57"
+    },
+    {
+      "source": "tools/scripts/mk_image.py",
+      "mode": "reference",
+      "sha256": "5a225417f83e0f73eef14f0739b30fb84a0bf290e6c66e75e1d9f4b68fb19bf5"
+    },
+    {
+      "source": "tools/scripts/itbimage/__main__.py",
+      "mode": "reference",
+      "sha256": "bf386a4a98e58d9d89099cd6ebb51be99907b56e832a037335f30dd8c69f4e77"
+    }
+  ]
+}

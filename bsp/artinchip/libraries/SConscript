@@ -1,0 +1,154 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = []
+# aic_compat.h includes aic_cache.h, whose implementation lives in the
+# current board (board/cache.c).  Dir('#') is the BSP root, so this also
+# resolves in a scons --dist tree.
+CPPPATH = [cwd + '/include', cwd + '/hal/i2c']
+
+# Shared HAL: register-compatible IP reused by more than one ArtInChip SoC.
+if GetDepend('AIC_USING_HAL_I2C'):
+    src += ['hal/i2c/hal_i2c.c']
+
+# Cross-SoC RT-Thread device adapters.  The adapter body only calls the HAL
+# interface; the instance table consumes I2Cx_BASE/I2Cx_IRQn/CLK_I2Cx from
+# the selected SoC layer, so another SoC that selects AIC_USING_DRV_I2C
+# reuses the adapter.
+if GetDepend('AIC_USING_DRV_I2C'):
+    src += ['drivers/i2c/drv_i2c.c']
+
+# Device-framework adapters with no SoC register accesses.
+if GetDepend('BSP_USING_TOUCH_GT911'):
+    src += ['drivers/touch/drv_touch_gt911.c']
+if GetDepend('BSP_SPINAND_RODATA_FS'):
+    src += ['drivers/storage/drv_nand_rodata.c']
+if GetDepend('BSP_SPINAND_LITTLEFS'):
+    src += ['drivers/storage/drv_nand_lfs.c']
+    CPPPATH.append(Dir('#/littlefs').abspath)
+if GetDepend('BSP_SPINAND_RODATA_FS') or GetDepend('BSP_SPINAND_LITTLEFS'):
+    CPPPATH.append(cwd + '/drivers/storage')
+
+# D21x SoC layer: addresses, clock/reset tables, and the vendor HAL sources
+# selected by the board configuration.  Its headers provide the primitives
+# used by the shared HAL, so the path is added only for D21x builds; another
+# SoC adds its own include directory from its SConstruct.
+if GetDepend('AIC_SOC_D21X'):
+    CPPPATH.append(cwd + '/soc/d21x/include')
+    CPPPATH.append(cwd + '/soc/d21x/drivers')
+    gpio = GetDepend('BSP_USING_GPIO')
+    uart = False
+    for n in range(8):
+        if GetDepend('BSP_USING_UART%d' % n):
+            uart = True
+    can = GetDepend('BSP_USING_CAN0') or GetDepend('BSP_USING_CAN1')
+    pwm = GetDepend('BSP_USING_PWM')
+    wdt = GetDepend('BSP_USING_WDT')
+    rtc = GetDepend('BSP_USING_RTC')
+    display = GetDepend('BSP_USING_DISPLAY')
+    ge = GetDepend('BSP_USING_GE')
+    ve = GetDepend('BSP_USING_VE')
+    sdmc = GetDepend('BSP_USING_SDMC1') or GetDepend('BSP_USING_SDMC2')
+    dmac = GetDepend('BSP_USING_DMAC')
+    audio = GetDepend('BSP_USING_AUDIO') or GetDepend('BSP_USING_DMIC')
+    usb = (GetDepend('BSP_USING_USB0_HOST') or
+           GetDepend('BSP_USING_USB1_HOST') or
+           GetDepend('BSP_USING_USB0_DEVICE'))
+    gmac = GetDepend('BSP_USING_GMAC0')
+    tsen = GetDepend('BSP_USING_TSEN')
+    gpai = GetDepend('BSP_USING_GPAI6')
+    ce = GetDepend('BSP_USING_CE')
+
+    # RT-Thread device adapters whose register/IRQ/cache assumptions are
+    # specific to the D21x port (the HAL underneath may still be shared).
+    if GetDepend('BSP_USING_DMA'):
+        src += ['soc/d21x/drivers/drv_dma.c']
+    if uart:
+        src += ['soc/d21x/drivers/drv_uart.c']
+    if gpio:
+        src += ['soc/d21x/drivers/drv_gpio.c']
+    if wdt:
+        src += ['soc/d21x/drivers/drv_wdt.c']
+    if rtc:
+        src += ['soc/d21x/drivers/drv_rtc.c']
+    if gpai:
+        src += ['soc/d21x/drivers/drv_gpai.c']
+
+    for option, source in (
+            ('BSP_USING_DMAC', 'drv_dmac.c'),
+            ('BSP_USING_PWM', 'drv_pwm.c'),
+            ('BSP_USING_TSEN', 'drv_tsen.c'),
+            ('BSP_USING_CE', 'drv_ce.c'),
+            ('BSP_USING_AUDIO', 'drv_audio.c'),
+            ('BSP_USING_DMIC', 'drv_dmic.c'),
+            ('BSP_USING_GMAC0', 'drv_mac.c'),
+            ('BSP_USING_DISPLAY', 'drv_disp.c'),
+            ('BSP_USING_GE', 'drv_ge.c'),
+            ('BSP_USING_VE', 'drv_ve.c'),
+            ('BSP_USING_QSPI0', 'drv_qspi.c'),
+            ('BSP_USING_SPINAND_MTD_NAND', 'drv_spinand.c')):
+        if GetDepend(option):
+            src += ['soc/d21x/drivers/' + source]
+    if can:
+        src += ['soc/d21x/drivers/drv_can.c']
+    if sdmc:
+        src += ['soc/d21x/drivers/drv_sdmc.c']
+    if GetDepend('BSP_USING_USB0_HOST') or GetDepend('BSP_USING_USB1_HOST'):
+        src += ['soc/d21x/drivers/drv_usb.c']
+
+    if gpio or display or gmac:
+        src += ['soc/d21x/hal/aic_hal_gpio.c']
+    if can:
+        src += ['soc/d21x/hal/aic_hal_can.c']
+    if pwm:
+        src += ['soc/d21x/hal/hal_pwm.c']
+    if wdt:
+        src += ['soc/d21x/hal/hal_wdt.c']
+    if rtc:
+        src += ['soc/d21x/hal/hal_rtc.c']
+    if sdmc:
+        src += ['soc/d21x/hal/hal_sdmc.c']
+    if dmac:
+        src += ['soc/d21x/hal/hal_dma.c']
+    if audio:
+        src += ['soc/d21x/hal/hal_audio.c']
+    if usb or gmac:
+        src += ['soc/d21x/port/aic_hal_syscfg.c']
+
+    if tsen or gpai:
+        src += ['soc/d21x/hal/hal_adcim.c']
+    if tsen:
+        src += ['soc/d21x/hal/hal_tsen.c']
+        src += ['soc/d21x/hal/hal_efuse.c']
+    if gpai:
+        src += ['soc/d21x/hal/hal_gpai.c']
+
+    if gmac:
+        src += ['soc/d21x/hal/aic_mac.c']
+        src += ['soc/d21x/hal/aic_mac_ll.c']
+        src += ['soc/d21x/hal/aic_phy.c']
+
+    if ce:
+        src += ['soc/d21x/hal/hal_ce.c']
+
+    if display:
+        src += ['soc/d21x/display/aic_hal_de.c']
+        src += ['soc/d21x/port/aic_disp_clk.c']
+
+    if ge:
+        src += ['soc/d21x/ge/hal_ge_normal.c']
+        src += ['soc/d21x/ge/hal_ge_hw.c']
+
+    if display or ge or ve or usb or gmac:
+        src += ['soc/d21x/port/aic_hal_reset.c']
+
+    if (gpio or GetDepend('AIC_USING_HAL_I2C') or can or pwm or wdt or rtc or
+            display or ge or ve or sdmc or dmac or audio or usb or gmac or tsen or
+            gpai or ce):
+        src += ['soc/d21x/port/aic_hal_clk.c']
+
+CPPPATH.append(Dir('#/board').abspath)
+
+group = DefineGroup('ArtInChipHAL', src, depend=[''], CPPPATH=CPPPATH)
+
+Return('group')

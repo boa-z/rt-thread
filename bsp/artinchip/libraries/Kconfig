@@ -1,0 +1,24 @@
+config AIC_SOC_D21X
+    bool
+    default n
+    help
+        Builds the D21x SoC layer (D213/D21x register map, clock and reset
+        tables, and the vendor HAL selected by the board options).  Selected
+        by D21x boards; other SoC families provide their own layer.
+
+config AIC_USING_HAL_I2C
+    bool
+    default n
+    help
+        Builds the shared I2C v1.0 HAL from libraries/hal/i2c.  Selected by
+        BSP_USING_I2Cn on SoCs whose I2C controller is register-compatible.
+
+config AIC_USING_DRV_I2C
+    bool
+    default n
+    select AIC_USING_HAL_I2C
+    help
+        Builds the RT-Thread I2C master adapter from libraries/drivers/i2c.
+        The adapter calls hal_i2c_* and uses the I2Cx_BASE/I2Cx_IRQn/CLK_I2Cx
+        constants supplied by the selected SoC layer, so a board only needs
+        to provide those constants and BSP_USING_I2Cn.

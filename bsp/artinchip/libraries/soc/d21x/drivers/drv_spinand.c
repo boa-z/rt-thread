@@ -1,0 +1,2007 @@
+/*
+ * Copyright (c) 2026, RT-Thread Development Team
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * ArtInChip D21x SPI NAND driver.
+ *
+ * Command sequence, geometry and ECC decoding are ported from the
+ * Luban-Lite SPI NAND stack (Apache-2.0):
+ *   bsp/peripheral/spinand/spinand.c
+ *   bsp/peripheral/spinand/winbond.c
+ *   bsp/peripheral/spinand/inc/spinand.h
+ *   bsp/artinchip/drv/spinand/spinand_port.c
+ *
+ * Deliberate differences from the vendor stack:
+ *   - read_id / read_page / check_block and the program / erase /
+ *     move_page / mark_badblock path are implemented;
+ *   - the vendor 13-entry MTD ops table (continuous_read, block status,
+ *     OOB map, bitflip callback) is not ported into the upstream public
+ *     MTD structure;
+ *   - partitions come from pack/image_cfg.json at build time;
+ *   - NFTL partitions are not exposed as linear MTD devices;
+ *   - the unallocated tail of the chip can be registered as the
+ *     writable "nand_scratch" device, so the destructive path is
+ *     exercised without touching the image.
+ *
+ * Safety: the declared image partitions are read-only when
+ * BSP_SPINAND_READONLY is set (the default).  The write path itself is
+ * always built; only the scratch device and builds that deliberately
+ * disable BSP_SPINAND_READONLY can reach it at run time.
+ */
+
+#include <rthw.h>
+#include <rtthread.h>
+#include <rtdevice.h>
+#include <string.h>
+
+#include "drv_spinand.h"
+#include "drv_qspi.h"
+#include "aic_board.h"
+
+/* ------------------------------------------------------------------ */
+/* NAND commands and registers (spinand.h)                            */
+/* ------------------------------------------------------------------ */
+
+#define SPINAND_CMD_RESET           0xFFU
+#define SPINAND_CMD_GET_FEATURE     0x0FU
+#define SPINAND_CMD_SET_FEATURE     0x1FU
+#define SPINAND_CMD_PAGE_READ       0x13U
+#define SPINAND_CMD_READ_CACHE      0x03U
+#define SPINAND_CMD_READ_CACHE_X2   0x3BU
+#define SPINAND_CMD_READ_CACHE_X4   0x6BU
+#define SPINAND_CMD_READ_ID         0x9FU
+#define SPINAND_CMD_WRITE_ENABLE    0x06U
+#define SPINAND_CMD_PROGRAM_LOAD    0x02U
+#define SPINAND_CMD_PROGRAM_EXEC    0x10U
+#define SPINAND_CMD_BLOCK_ERASE     0xD8U
+
+#define SPINAND_REG_BLOCK_LOCK      0xA0U
+#define SPINAND_REG_CFG             0xB0U
+#define SPINAND_REG_STATUS          0xC0U
+
+#define SPINAND_CFG_QUAD_ENABLE     (1U << 0)
+#define SPINAND_CFG_BUF_ENABLE      (1U << 3)
+#define SPINAND_CFG_ECC_ENABLE      (1U << 4)
+
+#define SPINAND_STATUS_BUSY         (1U << 0)
+#define SPINAND_STATUS_ERASE_FAIL   (1U << 2)
+#define SPINAND_STATUS_PROG_FAIL    (1U << 3)
+#define SPINAND_STATUS_ECC_MASK     (0x3U << 4)
+
+#define SPINAND_BUSY_TIMEOUT_US     30000U
+
+#define SPINAND_PART_PRINT_MAX      4096U
+#define SPINAND_FIT_MAGIC           0xD00DFEEDU
+
+struct spi_nand_cmd_cfg
+{
+    rt_uint8_t opcode;
+    rt_uint8_t opcode_bits;
+    rt_uint8_t addr_bytes;
+    rt_uint8_t addr_bits;
+    rt_uint8_t dummy_bytes;
+    rt_uint8_t data_bits;
+};
+
+static const struct spi_nand_cmd_cfg cmd_get_feature = {SPINAND_CMD_GET_FEATURE, 1, 1, 1, 0, 1};
+static const struct spi_nand_cmd_cfg cmd_set_feature = {SPINAND_CMD_SET_FEATURE, 1, 1, 1, 0, 1};
+static const struct spi_nand_cmd_cfg cmd_page_read   = {SPINAND_CMD_PAGE_READ, 1, 3, 1, 0, 0};
+static const struct spi_nand_cmd_cfg cmd_read_id     = {SPINAND_CMD_READ_ID, 1, 0, 1, 1, 1};
+static const struct spi_nand_cmd_cfg cmd_reset       = {SPINAND_CMD_RESET, 1, 0, 0, 0, 0};
+static const struct spi_nand_cmd_cfg cmd_read_cache  = {SPINAND_CMD_READ_CACHE, 1, 2, 1, 1, 1};
+static const struct spi_nand_cmd_cfg cmd_read_cache_x2 = {SPINAND_CMD_READ_CACHE_X2, 1, 2, 1, 1, 2};
+static const struct spi_nand_cmd_cfg cmd_read_cache_x4 = {SPINAND_CMD_READ_CACHE_X4, 1, 2, 1, 1, 4};
+static const struct spi_nand_cmd_cfg cmd_write_enable = {SPINAND_CMD_WRITE_ENABLE, 1, 0, 0, 0, 0};
+static const struct spi_nand_cmd_cfg cmd_program_load = {SPINAND_CMD_PROGRAM_LOAD, 1, 2, 1, 0, 1};
+static const struct spi_nand_cmd_cfg cmd_program_exec = {SPINAND_CMD_PROGRAM_EXEC, 1, 3, 1, 0, 0};
+static const struct spi_nand_cmd_cfg cmd_block_erase  = {SPINAND_CMD_BLOCK_ERASE, 1, 3, 1, 0, 0};
+
+/* ------------------------------------------------------------------ */
+/* Supported chips (subset of Luban-Lite winbond.c)                   */
+/* ------------------------------------------------------------------ */
+
+struct spinand_model
+{
+    rt_uint8_t id[3];              /* manufacturer, device id byte 1/2 */
+    const char *name;
+    rt_uint16_t page_size;
+    rt_uint16_t oob_size;
+    rt_uint16_t pages_per_block;
+    rt_uint16_t block_count;
+    rt_uint16_t ecc_strength;
+    rt_uint8_t hw_verified;        /* 1 = checked on real D213 hardware */
+};
+
+/*
+ * Parameters ported from Luban-Lite winbond.c; only W25N01GV has ever
+ * been read on real hardware in this BSP.  The remaining entries keep
+ * the raw table parameters for diagnostics only, and the MTD partition
+ * registration refuses to use them (see spinand_register_partitions):
+ *
+ *   - W25N01KV: Luban-Lite OOB=64 vs Linux mainline OOB=96 (conflict)
+ *   - W25N02KV/KW: V1.3.3 corrects ECC to 8-bit and KW to 2048 blocks;
+ *     these parts still lack board validation and remain diagnostic-only
+ *   - W25N02JW: not present on any available D213 board
+ *
+ * Do not "fix" these by copying from the other source: until parameter
+ * data is confirmed against the datasheet, they are marked unverified.
+ */
+static const struct spinand_model spinand_models[] =
+{
+    {{0xEF, 0xAA, 0x21}, "W25N01GV", 2048,  64, 64, 1024, 1, 1},
+    {{0xEF, 0xAE, 0x21}, "W25N01KV", 2048,  64, 64, 1024, 4, 0},
+    {{0xEF, 0xAA, 0x22}, "W25N02KV", 2048, 128, 64, 2048, 8, 0},
+    {{0xEF, 0xBA, 0x22}, "W25N02KW", 2048, 128, 64, 2048, 8, 0},
+    {{0xEF, 0xBF, 0x22}, "W25N02JW", 2048,  64, 64, 2048, 1, 0},
+};
+
+/* ------------------------------------------------------------------ */
+/* Driver state                                                       */
+/* ------------------------------------------------------------------ */
+
+struct aic_spinand_state
+{
+    struct rt_qspi_device *qspi;
+    struct rt_mutex lock;
+    rt_bool_t lock_ready;
+    rt_bool_t ready;
+    rt_bool_t geometry_matches;
+    const struct spinand_model *model;
+    rt_uint8_t id[4];
+    rt_uint16_t page_size;
+    rt_uint16_t oob_size;
+    rt_uint16_t pages_per_block;
+    rt_uint16_t block_count;
+    rt_uint16_t ecc_strength;
+    rt_uint8_t qspi_dl_width;
+    rt_uint8_t *pagebuf;
+    rt_uint32_t pagebuf_len;
+    rt_bool_t write_unlocked;      /* block-lock register cleared */
+    rt_uint32_t scratch_start;     /* first unallocated physical block */
+    rt_uint32_t scratch_blocks;
+};
+
+static struct aic_spinand_state spinand;
+
+static rt_uint32_t nand_total_pages(void)
+{
+    return (rt_uint32_t)spinand.block_count * spinand.pages_per_block;
+}
+
+static int nand_lock(void)
+{
+    if (!spinand.lock_ready)
+        return -RT_EIO;
+    return (rt_mutex_take(&spinand.lock, RT_WAITING_FOREVER) == RT_EOK)
+               ? RT_EOK : -RT_EIO;
+}
+
+static void nand_unlock(void)
+{
+    rt_mutex_release(&spinand.lock);
+}
+
+/* ------------------------------------------------------------------ */
+/* QSPI message helper (spinand_port.c: qspi_messages_init)          */
+/* ------------------------------------------------------------------ */
+
+static int spinand_transfer(const struct spi_nand_cmd_cfg *cfg, rt_uint32_t addr,
+                            const rt_uint8_t *sendbuf, rt_uint8_t *recvbuf,
+                            rt_uint32_t datacount)
+{
+    struct rt_qspi_message msg;
+    rt_ssize_t ret;
+
+    if (spinand.qspi == RT_NULL)
+        return -RT_EIO;
+
+    rt_memset(&msg, 0, sizeof(msg));
+    msg.instruction.content = cfg->opcode;
+    msg.instruction.qspi_lines = cfg->opcode_bits;
+    msg.address.content = addr;
+    msg.address.size = cfg->addr_bytes;
+    msg.address.qspi_lines = cfg->addr_bits;
+    if (cfg->addr_bits != 0)
+        msg.dummy_cycles = (rt_uint32_t)(cfg->dummy_bytes * 8U) / cfg->addr_bits;
+    else
+        msg.dummy_cycles = (rt_uint32_t)(cfg->dummy_bytes * 8U) /
+                           (cfg->opcode_bits != 0 ? cfg->opcode_bits : 1U);
+    msg.qspi_data_lines = cfg->data_bits;
+    msg.parent.cs_take = 1;
+    msg.parent.cs_release = 1;
+    msg.parent.send_buf = sendbuf;
+    msg.parent.recv_buf = recvbuf;
+    msg.parent.length = datacount;
+    msg.parent.next = RT_NULL;
+
+    ret = rt_qspi_transfer_message(spinand.qspi, &msg);
+    if (ret < 0)
+    {
+        /* Keep the distinction: the QSPI layer maps a transfer-watchdog
+         * expiry to -RT_ETIMEOUT, everything else is a transport error. */
+        return (ret == -RT_ETIMEOUT) ? -RT_ETIMEOUT : -RT_EIO;
+    }
+    if (ret == 0)
+        return -RT_EIO;
+    if (datacount != 0 && ret < (rt_ssize_t)datacount)
+        return -RT_EIO;
+    return RT_EOK;
+}
+
+static int spinand_read_reg(rt_uint8_t reg, rt_uint8_t *val)
+{
+    return spinand_transfer(&cmd_get_feature, reg, RT_NULL, val, 1);
+}
+
+static int spinand_write_reg(rt_uint8_t reg, rt_uint8_t val)
+{
+    return spinand_transfer(&cmd_set_feature, reg, &val, RT_NULL, 1);
+}
+
+static int spinand_read_status_reg(rt_uint8_t *status)
+{
+    return spinand_read_reg(SPINAND_REG_STATUS, status);
+}
+
+static int spinand_wait_busy(rt_uint8_t *status)
+{
+    rt_uint32_t waited = 0;
+    rt_uint8_t sr = 0;
+
+    for (;;)
+    {
+        if (spinand_read_status_reg(&sr) != RT_EOK)
+            return -RT_EIO;
+        if (!(sr & SPINAND_STATUS_BUSY))
+            break;
+        if (waited++ >= SPINAND_BUSY_TIMEOUT_US)
+            return -RT_ETIMEOUT;
+        rt_hw_us_delay(1);
+    }
+    if (status != RT_NULL)
+        *status = sr;
+    return RT_EOK;
+}
+
+static int spinand_config_update(rt_uint8_t mask, rt_uint8_t value)
+{
+    rt_uint8_t cfg;
+
+    if (spinand_read_reg(SPINAND_REG_CFG, &cfg) != RT_EOK)
+        return -RT_EIO;
+    cfg = (rt_uint8_t)((cfg & ~mask) | (value & mask));
+    return spinand_write_reg(SPINAND_REG_CFG, cfg);
+}
+
+static int spinand_read_id_op(rt_uint8_t id[4])
+{
+    return spinand_transfer(&cmd_read_id, 0, RT_NULL, id, 4);
+}
+
+static int spinand_load_page(rt_uint32_t page)
+{
+    return spinand_transfer(&cmd_page_read, page, RT_NULL, RT_NULL, 0);
+}
+
+static int spinand_read_cache(rt_uint32_t column, rt_uint8_t *buf, rt_uint32_t len)
+{
+    const struct spi_nand_cmd_cfg *cfg;
+
+    if (spinand.qspi_dl_width == 4)
+        cfg = &cmd_read_cache_x4;
+    else if (spinand.qspi_dl_width == 2)
+        cfg = &cmd_read_cache_x2;
+    else
+        cfg = &cmd_read_cache;
+    return spinand_transfer(cfg, column, RT_NULL, buf, len);
+}
+
+/*
+ * Decode the ECC bits (STATUS bits 5:4) of the status register.
+ *
+ * All Winbond parts in the table agree on 00b (clean) / 01b (corrected)
+ * / 10b (uncorrectable).  11b is only meaningful on parts like W25N04KV
+ * or W25W35Nxx (Linux mainline decodes it as 5-8 bit flips corrected);
+ * the W25N01GV datasheet defines it as reserved.  Since this port only
+ * trusts W25N01GV, a 11b pattern is rejected (fail closed) instead of
+ * being guessed: callers get SPINAND_RO_EIO and the status byte is
+ * printed for diagnostics.
+ *
+ *   0  : no bit flips
+ *   1  : bit flips corrected by the on-chip ECC
+ *  -1  : uncorrectable
+ *  -2  : undefined/reserved pattern - treated as an error
+ */
+static int spinand_decode_ecc(rt_uint8_t status)
+{
+    rt_uint8_t ecc = (status & SPINAND_STATUS_ECC_MASK) >> 4;
+
+    switch (ecc)
+    {
+    case 0:
+        return 0;
+    case 1:
+        return 1;
+    case 2:
+        return -1;
+    default:
+        return -2;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Raw page read                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Caller must hold the flash lock.  Load the page into spinand.pagebuf
+ * (main area followed by OOB) and report the ECC outcome through
+ * *ecc_result.  Returns SPINAND_RO_OK / SPINAND_RO_ECC_OK on success.
+ */
+static int spinand_fetch_page_locked(rt_uint32_t page, int *ecc_result)
+{
+    rt_uint8_t status = 0;
+    int ecc;
+    int ret;
+
+    if (ecc_result != RT_NULL)
+        *ecc_result = SPINAND_RO_EIO;
+
+    if (page >= nand_total_pages())
+        return SPINAND_RO_EINVAL;
+    if (spinand.pagebuf == RT_NULL)
+        return SPINAND_RO_EIO;
+
+    ret = spinand_load_page(page);
+    if (ret == -RT_ETIMEOUT)
+        return SPINAND_RO_ETIMEOUT;
+    if (ret != RT_EOK)
+        return SPINAND_RO_EIO;
+
+    ret = spinand_wait_busy(&status);
+    if (ret == -RT_ETIMEOUT)
+        return SPINAND_RO_ETIMEOUT;
+    if (ret != RT_EOK)
+        return SPINAND_RO_EIO;
+
+    ecc = spinand_decode_ecc(status);
+    if (ecc == -1)
+    {
+        if (ecc_result != RT_NULL)
+            *ecc_result = SPINAND_RO_EECC;
+        return SPINAND_RO_EECC;
+    }
+    if (ecc == -2)
+    {
+        rt_kprintf("spinand: undefined ECC status 0x%02x, refusing read\n",
+                   status);
+        return SPINAND_RO_EIO;
+    }
+
+    ret = spinand_read_cache(0, spinand.pagebuf, spinand.pagebuf_len);
+    if (ret == -RT_ETIMEOUT)
+        return SPINAND_RO_ETIMEOUT;
+    if (ret != RT_EOK)
+        return SPINAND_RO_EIO;
+
+    if (ecc_result != RT_NULL)
+        *ecc_result = (ecc == 1) ? SPINAND_RO_ECC_OK : SPINAND_RO_OK;
+    return (ecc == 1) ? SPINAND_RO_ECC_OK : SPINAND_RO_OK;
+}
+
+/* V1.3.3 reads the factory marker independently of main-area ECC.
+ * A bad first-page payload must not hide a readable OOB marker. This does
+ * not disable chip ECC, and regular data reads still reject bad ECC.
+ * Caller holds the flash lock. Never publish a marker on transport failure. */
+static int spinand_read_marker_locked(rt_uint32_t block, rt_uint8_t *marker)
+{
+    rt_uint8_t status, value;
+    int ret;
+
+    if (!marker || block >= spinand.block_count)
+        return -RT_EINVAL;
+    ret = spinand_load_page(block * spinand.pages_per_block);
+    if (ret == RT_EOK)
+        ret = spinand_wait_busy(&status);
+    if (ret == RT_EOK)
+        ret = spinand_read_cache(spinand.page_size, &value, 1);
+    if (ret == RT_EOK)
+        *marker = value;
+    return ret;
+}
+
+/* Caller must hold the flash lock. */
+static int spinand_read_page_locked(rt_uint32_t page,
+                                    rt_uint8_t *data, rt_uint32_t data_len,
+                                    rt_uint8_t *oob, rt_uint32_t oob_len,
+                                    int *result)
+{
+    int ecc_result = SPINAND_RO_EIO;
+    int ret;
+
+    if (result != RT_NULL)
+        *result = SPINAND_RO_EIO;
+
+    if (data_len > spinand.page_size || oob_len > spinand.oob_size)
+        return SPINAND_RO_EINVAL;
+    if ((data == RT_NULL || data_len == 0) && (oob == RT_NULL || oob_len == 0))
+        return SPINAND_RO_EINVAL;
+
+    ret = spinand_fetch_page_locked(page, &ecc_result);
+    if (ret != SPINAND_RO_OK && ret != SPINAND_RO_ECC_OK)
+        return ret;
+
+    if (data != RT_NULL && data_len != 0)
+        rt_memcpy(data, spinand.pagebuf, data_len);
+    if (oob != RT_NULL && oob_len != 0)
+        rt_memcpy(oob, spinand.pagebuf + spinand.page_size, oob_len);
+
+    if (result != RT_NULL)
+        *result = ecc_result;
+    return ecc_result;
+}
+
+/* ------------------------------------------------------------------ */
+/* Program / erase / move / bad-block marking                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The W25N01GV block-lock register is volatile and resets to 0x00, but
+ * the Bootloader or a previous stage may have left BP bits set.  Clear
+ * it once before the first program/erase, exactly like the vendor init
+ * sequence does; a hardware WP# pin can still block writes and then
+ * surfaces as a program/erase failure bit.
+ */
+static int spinand_ensure_unlocked(void)
+{
+    rt_uint8_t lock = 0;
+
+    if (spinand.write_unlocked)
+        return RT_EOK;
+    if (spinand_read_reg(SPINAND_REG_BLOCK_LOCK, &lock) != RT_EOK)
+        return -RT_EIO;
+    if (lock != 0)
+    {
+        if (spinand_write_reg(SPINAND_REG_BLOCK_LOCK, 0) != RT_EOK)
+            return -RT_EIO;
+        rt_kprintf("spinand: cleared block protection (0xA0=0x%02x -> 0x00)\n",
+                   lock);
+    }
+    spinand.write_unlocked = RT_TRUE;
+    return RT_EOK;
+}
+
+/*
+ * Caller must hold the flash lock.  image points at page_size + oob_size
+ * bytes and the destination page must have been erased.  With on-chip
+ * ECC enabled the ECC bytes in the OOB area are generated by the chip;
+ * whatever the caller puts into those positions is ignored.
+ */
+static int spinand_program_image_locked(rt_uint32_t page,
+                                        const rt_uint8_t *image)
+{
+    rt_uint8_t status = 0;
+    int ret;
+
+    if (page >= nand_total_pages() || image == RT_NULL)
+        return -RT_EINVAL;
+
+    ret = spinand_ensure_unlocked();
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_transfer(&cmd_write_enable, 0, RT_NULL, RT_NULL, 0);
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_transfer(&cmd_program_load, 0, image, RT_NULL,
+                           spinand.pagebuf_len);
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_transfer(&cmd_program_exec, page, RT_NULL, RT_NULL, 0);
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_wait_busy(&status);
+    if (ret != RT_EOK)
+        return ret;
+
+    if (status & SPINAND_STATUS_PROG_FAIL)
+    {
+        rt_kprintf("spinand: program fail, page %u STATUS=0x%02x\n",
+                   page, status);
+        return -RT_EIO;
+    }
+    return RT_EOK;
+}
+
+/* Caller must hold the flash lock; the page must already be erased. */
+static int spinand_write_page_locked(rt_uint32_t page,
+                                     const rt_uint8_t *data,
+                                     rt_uint32_t data_len,
+                                     const rt_uint8_t *oob, rt_uint32_t oob_len)
+{
+    if (page >= nand_total_pages())
+        return -RT_EINVAL;
+    if (data_len > spinand.page_size || oob_len > spinand.oob_size)
+        return -RT_EINVAL;
+    if ((data == RT_NULL || data_len == 0) &&
+        (oob == RT_NULL || oob_len == 0))
+        return -RT_EINVAL;
+    if (spinand.pagebuf == RT_NULL)
+        return -RT_EIO;
+
+    /* The NAND cache is written as one page image; bytes the caller
+     * does not supply stay erased (0xFF). */
+    rt_memset(spinand.pagebuf, 0xFF, spinand.pagebuf_len);
+    if (data != RT_NULL && data_len != 0)
+        rt_memcpy(spinand.pagebuf, data, data_len);
+    if (oob != RT_NULL && oob_len != 0)
+        rt_memcpy(spinand.pagebuf + spinand.page_size, oob, oob_len);
+
+    return spinand_program_image_locked(page, spinand.pagebuf);
+}
+
+/* Caller must hold the flash lock. */
+static int spinand_erase_block_locked(rt_uint32_t block)
+{
+    rt_uint8_t status = 0;
+    int ret;
+
+    if (block >= spinand.block_count)
+        return -RT_EINVAL;
+
+    ret = spinand_ensure_unlocked();
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_transfer(&cmd_write_enable, 0, RT_NULL, RT_NULL, 0);
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_transfer(&cmd_block_erase,
+                           block * spinand.pages_per_block,
+                           RT_NULL, RT_NULL, 0);
+    if (ret != RT_EOK)
+        return ret;
+
+    ret = spinand_wait_busy(&status);
+    if (ret != RT_EOK)
+        return ret;
+
+    if (status & SPINAND_STATUS_ERASE_FAIL)
+    {
+        rt_kprintf("spinand: erase fail, block %u STATUS=0x%02x\n",
+                   block, status);
+        return -RT_EIO;
+    }
+    return RT_EOK;
+}
+
+/*
+ * Caller must hold the flash lock.  The destination page must already be
+ * erased.  A page with corrected ECC is moved with the corrected data; a
+ * page with uncorrectable ECC is refused instead of copying garbage.
+ */
+static int spinand_move_page_locked(rt_uint32_t src_page, rt_uint32_t dst_page)
+{
+    int ecc_result = SPINAND_RO_EIO;
+    int ret;
+
+    if (src_page >= nand_total_pages() || dst_page >= nand_total_pages())
+        return -RT_EINVAL;
+
+    ret = spinand_fetch_page_locked(src_page, &ecc_result);
+    if (ret != SPINAND_RO_OK && ret != SPINAND_RO_ECC_OK)
+    {
+        if (ret == SPINAND_RO_ETIMEOUT)
+            return -RT_ETIMEOUT;
+        if (ret == SPINAND_RO_EINVAL)
+            return -RT_EINVAL;
+        return -RT_EIO;
+    }
+
+    return spinand_program_image_locked(dst_page, spinand.pagebuf);
+}
+
+/*
+ * Caller must hold the flash lock.  Erase the block and program its
+ * first page with an all-0xFF main area and OOB[0]=0x00, the Winbond
+ * bad-block marker.  Both operations are required: a marker written
+ * into a non-erased page could fail to program.
+ */
+static int spinand_mark_bad_locked(rt_uint32_t block)
+{
+    rt_uint32_t page;
+    int ret;
+
+    if (block >= spinand.block_count || spinand.pagebuf == RT_NULL)
+        return -RT_EINVAL;
+
+    ret = spinand_erase_block_locked(block);
+    if (ret != RT_EOK)
+        return ret;
+
+    page = block * spinand.pages_per_block;
+    rt_memset(spinand.pagebuf, 0xFF, spinand.pagebuf_len);
+    spinand.pagebuf[spinand.page_size] = 0x00;
+    return spinand_program_image_locked(page, spinand.pagebuf);
+}
+
+/* ------------------------------------------------------------------ */
+/* Identification / initialisation                                    */
+/* ------------------------------------------------------------------ */
+
+static const struct spinand_model *spinand_match_model(const rt_uint8_t id[4])
+{
+    rt_uint32_t i;
+
+    for (i = 0; i < sizeof(spinand_models) / sizeof(spinand_models[0]); i++)
+    {
+        if (id[0] == spinand_models[i].id[0] &&
+            id[1] == spinand_models[i].id[1] &&
+            id[2] == spinand_models[i].id[2])
+            return &spinand_models[i];
+    }
+    return RT_NULL;
+}
+
+static int spinand_attach_qspi(void)
+{
+    struct rt_qspi_configuration cfg;
+    struct rt_qspi_device *dev;
+    rt_err_t ret;
+
+    spinand.qspi = RT_NULL;
+
+    /* Guarantee bus registration order even if linker order changes. */
+    ret = rt_hw_qspi0_init();
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("spinand: qspi0 init failed (%d)\n", ret);
+        return -RT_ERROR;
+    }
+
+    dev = (struct rt_qspi_device *)rt_malloc(sizeof(*dev));
+    if (dev == RT_NULL)
+    {
+        rt_kprintf("spinand: no memory for rt_qspi_device\n");
+        return -RT_ENOMEM;
+    }
+    rt_memset(dev, 0, sizeof(*dev));
+
+    ret = rt_spi_bus_attach_device(&dev->parent, "spinand0", "qspi0", RT_NULL);
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("spinand: attach to qspi0 failed (%d)\n", ret);
+        rt_free(dev);
+        return -RT_ERROR;
+    }
+
+    rt_memset(&cfg, 0, sizeof(cfg));
+    cfg.parent.mode = RT_SPI_MODE_0 | RT_SPI_MSB;
+    cfg.parent.data_width = 8;
+    cfg.parent.max_hz = aic_board_qspi0.max_hz;
+    cfg.medium_size = 128UL * 1024UL * 1024UL;
+    cfg.ddr_mode = 0;
+    cfg.qspi_dl_width = 1;   /* stage 1: single-line data phase */
+
+    /*
+     * Do not use rt_qspi_configure() here: it updates the qspi config but
+     * rt_spi_bus_configure() then passes the still-zero parent.config to
+     * the driver, so mode/max_hz would be lost (LSB mode, wrong clock).
+     * Configure the parent explicitly, as the Nuvoton SPINAND port does.
+     */
+    dev->config = cfg;
+    ret = rt_spi_configure(&dev->parent, &dev->config.parent);
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("spinand: qspi configure failed (%d)\n", ret);
+        rt_spi_bus_detach_device(&dev->parent);
+        rt_free(dev);
+        return -RT_ERROR;
+    }
+
+    spinand.qspi = dev;
+    spinand.qspi_dl_width = dev->config.qspi_dl_width;
+    return RT_EOK;
+}
+
+static rt_err_t spinand_probe(void)
+{
+    rt_uint8_t id[4] = {0};
+    const struct spinand_model *model;
+    rt_uint32_t alloc;
+
+    if (spinand_read_id_op(id) != RT_EOK)
+    {
+        rt_kprintf("spinand: JEDEC ID read failed\n");
+        return -RT_EIO;
+    }
+    rt_memcpy(spinand.id, id, sizeof(id));
+    rt_kprintf("spinand: JEDEC ID %02X %02X %02X %02X\n",
+               id[0], id[1], id[2], id[3]);
+
+    model = spinand_match_model(id);
+    if (model == RT_NULL)
+    {
+        rt_kprintf("spinand: unsupported chip (no geometry table entry)\n");
+        return -RT_ENOSYS;
+    }
+
+    spinand.model = model;
+    spinand.page_size = model->page_size;
+    spinand.oob_size = model->oob_size;
+    spinand.pages_per_block = model->pages_per_block;
+    spinand.block_count = model->block_count;
+    spinand.ecc_strength = model->ecc_strength;
+    rt_kprintf("spinand: %s, %u+%u B, %u pages/block, %u blocks\n",
+               model->name, model->page_size, model->oob_size,
+               model->pages_per_block, model->block_count);
+    rt_kprintf("spinand: geometry %s\n",
+               model->hw_verified
+                   ? "hardware-verified on this BSP"
+                   : "UNVERIFIED ( vendor table only, diagnostics only )");
+
+    /* Only volatile configuration registers are touched.  No program,
+     * erase, block lock or bad-block marker change is performed. */
+    if (spinand_config_update(SPINAND_CFG_BUF_ENABLE,
+                              SPINAND_CFG_BUF_ENABLE) != RT_EOK)
+    {
+        rt_kprintf("spinand: failed to enable buffer read mode\n");
+        return -RT_EIO;
+    }
+    if (spinand_config_update(SPINAND_CFG_ECC_ENABLE,
+                              SPINAND_CFG_ECC_ENABLE) != RT_EOK)
+    {
+        rt_kprintf("spinand: failed to enable on-chip ECC\n");
+        return -RT_EIO;
+    }
+    {
+        rt_uint8_t cfg = 0, sr = 0;
+        if (spinand_read_reg(SPINAND_REG_CFG, &cfg) == RT_EOK &&
+            spinand_read_status_reg(&sr) == RT_EOK)
+            rt_kprintf("spinand: CFG=0x%02x STATUS=0x%02x\n", cfg, sr);
+        if ((cfg & (SPINAND_CFG_BUF_ENABLE | SPINAND_CFG_ECC_ENABLE)) !=
+            (SPINAND_CFG_BUF_ENABLE | SPINAND_CFG_ECC_ENABLE))
+        {
+            rt_kprintf("spinand: configuration did not stick (CFG=0x%02x)\n",
+                       cfg);
+            return -RT_EIO;
+        }
+    }
+
+    alloc = (rt_uint32_t)spinand.page_size + spinand.oob_size;
+    spinand.pagebuf = (rt_uint8_t *)rt_malloc(alloc);
+    if (spinand.pagebuf == RT_NULL)
+    {
+        rt_kprintf("spinand: no memory for page buffer (%u bytes)\n", alloc);
+        return -RT_ENOMEM;
+    }
+    spinand.pagebuf_len = alloc;
+
+    spinand.geometry_matches =
+        (spinand.page_size == aic_board_nand.page_size &&
+         spinand.oob_size == aic_board_nand.oob_size &&
+         spinand.pages_per_block ==
+             (aic_board_nand.block_size / aic_board_nand.page_size) &&
+         spinand.block_count == aic_board_nand.total_blocks);
+
+    if (!spinand.geometry_matches)
+    {
+        rt_kprintf("spinand: WARNING detected geometry differs from "
+                   "image_cfg.json (page %u/%u, oob %u/%u, ppb %u/%u, "
+                   "blocks %u/%u)\n",
+                   spinand.page_size, aic_board_nand.page_size,
+                   spinand.oob_size, aic_board_nand.oob_size,
+                   spinand.pages_per_block,
+                   (aic_board_nand.block_size / aic_board_nand.page_size),
+                   spinand.block_count, aic_board_nand.total_blocks);
+    }
+
+    spinand.ready = RT_TRUE;
+    return RT_EOK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Standard RT-Thread MTD NAND ops                                    */
+/* ------------------------------------------------------------------ */
+
+static rt_err_t spinand_mtd_read_id(struct rt_mtd_nand_device *device)
+{
+    rt_uint8_t id[4];
+    int ret;
+
+    (void)device;
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_id_op(id);
+    nand_unlock();
+    if (ret != RT_EOK)
+        return -RT_EIO;
+    rt_memcpy(spinand.id, id, sizeof(id));
+    return RT_EOK;
+}
+
+static rt_err_t spinand_mtd_read_page(struct rt_mtd_nand_device *device,
+                                      rt_off_t page,
+                                      rt_uint8_t *data, rt_uint32_t data_len,
+                                      rt_uint8_t *spare, rt_uint32_t spare_len)
+{
+    rt_uint32_t abs_page;
+    int result = SPINAND_RO_EIO;
+    int ret;
+
+    if (device == RT_NULL || device->priv != &spinand)
+        return -RT_EINVAL;
+    if (page < 0 || device->pages_per_block == 0)
+        return -RT_MTD_EIO;
+    if (page / device->pages_per_block >= device->block_total)
+        return -RT_MTD_EIO;
+    /* Buffer sizes must fit the geometry; the driver stages through an
+     * internal page buffer, so oversized lengths cannot be honoured. */
+    if (data_len > device->page_size || spare_len > device->oob_size)
+        return -RT_MTD_EIO;
+
+    abs_page = device->block_start * device->pages_per_block +
+               (rt_uint32_t)page;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_page_locked(abs_page, data, data_len,
+                                   spare, spare_len, &result);
+    nand_unlock();
+
+    switch (ret)
+    {
+    case SPINAND_RO_OK:
+        return RT_MTD_EOK;
+    case SPINAND_RO_ECC_OK:
+        return RT_MTD_EECC_CORRECT;
+    case SPINAND_RO_EECC:
+        return RT_MTD_EECC;
+    case SPINAND_RO_ETIMEOUT:
+        return RT_MTD_EBUSY;
+    case SPINAND_RO_EINVAL:
+        return -RT_MTD_EIO;
+    default:
+        return RT_MTD_EIO;
+    }
+}
+
+static rt_err_t spinand_mtd_check_block(struct rt_mtd_nand_device *device,
+                                        rt_uint32_t block)
+{
+    rt_uint8_t marker = 0xFF;
+    int ret;
+
+    if (device == RT_NULL || device->priv != &spinand)
+        return -RT_EINVAL;
+    if (block >= device->block_total)
+        return -RT_MTD_EIO;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_marker_locked(device->block_start + block, &marker);
+    nand_unlock();
+
+    if (ret == -RT_ETIMEOUT)
+        return RT_MTD_EBUSY;
+    if (ret != RT_EOK)
+        return RT_MTD_EIO;
+
+    return (marker != 0xFF) ? -RT_ERROR : RT_EOK;
+}
+
+/*
+ * Translate a partition-relative page/block into a physical one and
+ * reject anything outside the partition.  Returns RT_FALSE on error.
+ */
+static rt_bool_t spinand_mtd_abs_page(struct rt_mtd_nand_device *device,
+                                      rt_off_t page, rt_uint32_t *abs_page)
+{
+    if (device == RT_NULL || device->priv != &spinand ||
+        device->pages_per_block == 0)
+        return RT_FALSE;
+    if (page < 0 ||
+        page / device->pages_per_block >= device->block_total)
+        return RT_FALSE;
+
+    *abs_page = device->block_start * device->pages_per_block +
+                (rt_uint32_t)page;
+    return RT_TRUE;
+}
+
+static rt_bool_t spinand_mtd_abs_block(struct rt_mtd_nand_device *device,
+                                       rt_uint32_t block, rt_uint32_t *abs_block)
+{
+    if (device == RT_NULL || device->priv != &spinand)
+        return RT_FALSE;
+    if (block >= device->block_total)
+        return RT_FALSE;
+
+    *abs_block = device->block_start + block;
+    return RT_TRUE;
+}
+
+static rt_err_t spinand_mtd_write_page(struct rt_mtd_nand_device *device,
+                                       rt_off_t page,
+                                       const rt_uint8_t *data, rt_uint32_t data_len,
+                                       const rt_uint8_t *spare, rt_uint32_t spare_len)
+{
+    rt_uint32_t abs_page;
+    int ret;
+
+    if (!spinand_mtd_abs_page(device, page, &abs_page))
+        return -RT_MTD_EIO;
+    if (data_len > device->page_size || spare_len > device->oob_size)
+        return -RT_MTD_EIO;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_write_page_locked(abs_page, data, data_len,
+                                    spare, spare_len);
+    nand_unlock();
+
+    if (ret == -RT_ETIMEOUT)
+        return RT_MTD_EBUSY;
+    if (ret != RT_EOK)
+        return RT_MTD_EIO;
+    return RT_MTD_EOK;
+}
+
+static rt_err_t spinand_mtd_move_page(struct rt_mtd_nand_device *device,
+                                      rt_off_t src_page, rt_off_t dst_page)
+{
+    rt_uint32_t abs_src, abs_dst;
+    int ret;
+
+    if (!spinand_mtd_abs_page(device, src_page, &abs_src) ||
+        !spinand_mtd_abs_page(device, dst_page, &abs_dst))
+        return -RT_MTD_EIO;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_move_page_locked(abs_src, abs_dst);
+    nand_unlock();
+
+    return (ret == -RT_ETIMEOUT) ? RT_MTD_EBUSY :
+           (ret == RT_EOK) ? RT_MTD_EOK : RT_MTD_EIO;
+}
+
+static rt_err_t spinand_mtd_erase_block(struct rt_mtd_nand_device *device,
+                                        rt_uint32_t block)
+{
+    rt_uint32_t abs_block;
+    int ret;
+
+    if (!spinand_mtd_abs_block(device, block, &abs_block))
+        return -RT_MTD_EIO;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_erase_block_locked(abs_block);
+    nand_unlock();
+
+    return (ret == -RT_ETIMEOUT) ? RT_MTD_EBUSY :
+           (ret == RT_EOK) ? RT_MTD_EOK : RT_MTD_EIO;
+}
+
+static rt_err_t spinand_mtd_mark_badblock(struct rt_mtd_nand_device *device,
+                                          rt_uint32_t block)
+{
+    rt_uint32_t abs_block;
+    int ret;
+
+    if (!spinand_mtd_abs_block(device, block, &abs_block))
+        return -RT_MTD_EIO;
+
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_mark_bad_locked(abs_block);
+    nand_unlock();
+
+    return (ret == -RT_ETIMEOUT) ? RT_MTD_EBUSY :
+           (ret == RT_EOK) ? RT_MTD_EOK : RT_MTD_EIO;
+}
+
+static const struct rt_mtd_nand_driver_ops spinand_mtd_rw_ops =
+{
+    .read_id = spinand_mtd_read_id,
+    .read_page = spinand_mtd_read_page,
+    .write_page = spinand_mtd_write_page,
+    .move_page = spinand_mtd_move_page,
+    .erase_block = spinand_mtd_erase_block,
+    .check_block = spinand_mtd_check_block,
+    .mark_badblock = spinand_mtd_mark_badblock,
+};
+
+#if defined(BSP_SPINAND_READONLY)
+/*
+ * Read-only policy for the image_cfg partitions.  These stubs are
+ * required because the upstream MTD core RT_ASSERT()s on the pointers.
+ * They return before any NAND command is issued.
+ */
+static rt_err_t spinand_mtd_write_page_ro(struct rt_mtd_nand_device *device,
+                                          rt_off_t page,
+                                          const rt_uint8_t *data,
+                                          rt_uint32_t data_len,
+                                          const rt_uint8_t *spare,
+                                          rt_uint32_t spare_len)
+{
+    (void)device; (void)page; (void)data; (void)data_len;
+    (void)spare; (void)spare_len;
+    return -RT_EPERM;
+}
+
+static rt_err_t spinand_mtd_move_page_ro(struct rt_mtd_nand_device *device,
+                                         rt_off_t src_page, rt_off_t dst_page)
+{
+    (void)device; (void)src_page; (void)dst_page;
+    return -RT_EPERM;
+}
+
+static rt_err_t spinand_mtd_erase_block_ro(struct rt_mtd_nand_device *device,
+                                           rt_uint32_t block)
+{
+    (void)device; (void)block;
+    return -RT_EPERM;
+}
+
+static rt_err_t spinand_mtd_mark_badblock_ro(struct rt_mtd_nand_device *device,
+                                             rt_uint32_t block)
+{
+    (void)device; (void)block;
+    return -RT_EPERM;
+}
+
+static const struct rt_mtd_nand_driver_ops spinand_mtd_image_ro_ops =
+{
+    .read_id = spinand_mtd_read_id,
+    .read_page = spinand_mtd_read_page,
+    .write_page = spinand_mtd_write_page_ro,
+    .move_page = spinand_mtd_move_page_ro,
+    .erase_block = spinand_mtd_erase_block_ro,
+    .check_block = spinand_mtd_check_block,
+    .mark_badblock = spinand_mtd_mark_badblock_ro,
+};
+#define SPINAND_IMAGE_OPS (&spinand_mtd_image_ro_ops)
+#else
+#define SPINAND_IMAGE_OPS (&spinand_mtd_rw_ops)
+#endif
+
+#ifdef RT_USING_DEVICE_OPS
+/*
+ * The upstream MTD core's generic rt_device_read()/write() handlers simply
+ * return the requested size without touching the flash.  A caller could
+ * mistake the size for a successful transfer.  Force callers onto the MTD
+ * API by failing both generic entry points explicitly; rt_mtd_nand_*
+ * bypasses these device ops.
+ */
+static rt_ssize_t spinand_mtd_dev_read(rt_device_t dev, rt_off_t pos,
+                                       void *buffer, rt_size_t size)
+{
+    (void)dev; (void)pos; (void)buffer; (void)size;
+    return -RT_ENOSYS;
+}
+
+static rt_ssize_t spinand_mtd_dev_write(rt_device_t dev, rt_off_t pos,
+                                        const void *buffer, rt_size_t size)
+{
+    (void)dev; (void)pos; (void)buffer; (void)size;
+    return -RT_EPERM;
+}
+
+static rt_err_t spinand_mtd_dev_init(rt_device_t dev) { (void)dev; return RT_EOK; }
+static rt_err_t spinand_mtd_dev_open(rt_device_t dev, rt_uint16_t oflag)
+{
+    (void)dev; (void)oflag; return RT_EOK;
+}
+static rt_err_t spinand_mtd_dev_close(rt_device_t dev) { (void)dev; return RT_EOK; }
+static rt_err_t spinand_mtd_dev_control(rt_device_t dev, int cmd, void *args)
+{
+    /* All NAND access goes through rt_mtd_nand_*(); the generic device
+     * control entry must not report success for commands it cannot
+     * perform. */
+    (void)dev; (void)cmd; (void)args;
+    return -RT_ENOSYS;
+}
+
+static const struct rt_device_ops spinand_mtd_device_ops =
+{
+    .init = spinand_mtd_dev_init,
+    .open = spinand_mtd_dev_open,
+    .close = spinand_mtd_dev_close,
+    .read = spinand_mtd_dev_read,
+    .write = spinand_mtd_dev_write,
+    .control = spinand_mtd_dev_control,
+};
+#endif /* RT_USING_DEVICE_OPS */
+
+/* ------------------------------------------------------------------ */
+/* Partition registration                                             */
+/* ------------------------------------------------------------------ */
+
+
+static rt_err_t spinand_register_partitions(void)
+{
+    rt_uint32_t i;
+    rt_uint32_t registered = 0;
+
+    if (!spinand.geometry_matches)
+    {
+        rt_kprintf("spinand: partitions not registered, chip geometry "
+                   "does not match image_cfg.json\n");
+        return -RT_EIO;
+    }
+
+    /*
+     * The partition layout in image_cfg.json is written for the
+     * hardware-verified geometry.  A different chip (different oob,
+     * block count or ECC decoder) must not be registered as a linear
+     * MTD partition set: the decode may still be in the raw table but
+     * its parameter sources disagree, so refuse loudly instead.
+     */
+    if (spinand.model == RT_NULL || !spinand.model->hw_verified)
+    {
+        rt_kprintf("spinand: partitions not registered, %s has no "
+                   "hardware-verified geometry (hw_verified=0); "
+                   "raw aic_nand_* diagnostics stay available\n",
+                   (spinand.model != RT_NULL) ? spinand.model->name : "chip");
+        return -RT_ENOSYS;
+    }
+
+    for (i = 0; i < aic_board_nand.part_count; i++)
+    {
+        const struct spinand_part_desc *part = &aic_board_nand.parts[i];
+        struct rt_mtd_nand_device *dev = &aic_board_nand.devices[i];
+        rt_err_t ret;
+
+        if (!part->linear)
+            continue;   /* NFTL-backed region: raw page access only */
+
+        if (part->start_block + part->block_count > spinand.block_count)
+        {
+            rt_kprintf("spinand: partition %s exceeds the chip\n", part->name);
+            return -RT_EIO;
+        }
+
+        rt_memset(dev, 0, sizeof(*dev));
+        dev->page_size = spinand.page_size;
+        dev->oob_size = spinand.oob_size;
+        dev->oob_free = 0;          /* raw OOB only; no user OOB mapping */
+        dev->plane_num = 1;
+        dev->pages_per_block = spinand.pages_per_block;
+        dev->block_total = part->block_count;
+        dev->block_start = part->start_block;
+        dev->block_end = part->start_block + part->block_count - 1;
+        dev->ops = SPINAND_IMAGE_OPS;
+        dev->priv = &spinand;
+
+        ret = rt_mtd_nand_register_device(part->name, dev);
+        if (ret != RT_EOK)
+        {
+            rt_kprintf("spinand: register %s failed (%d)\n", part->name, ret);
+            return ret;
+        }
+        /* The upstream helper always registers RDWR.  Reflect the real
+         * capability in the device flag for list_device()/debugging.  The
+         * flag is informational; enforcement is in the ops table. */
+#if defined(BSP_SPINAND_READONLY)
+        dev->parent.flag = RT_DEVICE_FLAG_RDONLY | RT_DEVICE_FLAG_STANDALONE;
+#else
+        dev->parent.flag = RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_STANDALONE;
+#endif
+#ifdef RT_USING_DEVICE_OPS
+        /* Fail generic rt_device_read()/write(); use rt_mtd_nand_* instead. */
+        dev->parent.ops = &spinand_mtd_device_ops;
+#endif
+        registered++;
+    }
+
+#if defined(BSP_SPINAND_READONLY)
+    rt_kprintf("spinand: %u linear MTD partition(s) registered, read-only\n",
+               registered);
+#else
+    rt_kprintf("spinand: %u linear MTD partition(s) registered, writable\n",
+               registered);
+#endif
+    return RT_EOK;
+}
+
+#ifdef BSP_SPINAND_SCRATCH_MTD
+/*
+ * The blocks that no partition in image_cfg.json claims are exposed as a
+ * separate writable MTD device.  This is the only device the destructive
+ * program/erase path is used on by default, and it can never overlap the
+ * boot chain.  With the current demo128 layout this is the physical tail
+ * after the 'refresh' partition.
+ */
+static struct rt_mtd_nand_device spinand_scratch_dev;
+
+static rt_err_t spinand_register_scratch(void)
+{
+    struct rt_mtd_nand_device *dev = &spinand_scratch_dev;
+    rt_uint32_t i;
+    rt_uint32_t used_blocks = 0;
+    rt_uint32_t blocks;
+    rt_err_t ret;
+
+    if (!spinand.geometry_matches ||
+        spinand.model == RT_NULL || !spinand.model->hw_verified)
+        return -RT_ENOSYS;
+
+    for (i = 0; i < aic_board_nand.part_count; i++)
+    {
+        rt_uint32_t end = aic_board_nand.parts[i].start_block +
+                          aic_board_nand.parts[i].block_count;
+        if (end > used_blocks)
+            used_blocks = end;
+    }
+    if (used_blocks >= spinand.block_count)
+    {
+        rt_kprintf("spinand: no unallocated tail for nand_scratch\n");
+        return -RT_ENOSPC;
+    }
+
+    blocks = spinand.block_count - used_blocks;
+    rt_memset(dev, 0, sizeof(*dev));
+    dev->page_size = spinand.page_size;
+    dev->oob_size = spinand.oob_size;
+    dev->oob_free = 0;
+    dev->plane_num = 1;
+    dev->pages_per_block = spinand.pages_per_block;
+    dev->block_total = (rt_uint16_t)blocks;
+    dev->block_start = used_blocks;
+    dev->block_end = used_blocks + blocks - 1;
+    dev->ops = &spinand_mtd_rw_ops;
+    dev->priv = &spinand;
+
+    ret = rt_mtd_nand_register_device(aic_board_nand.scratch_name, dev);
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("spinand: register nand_scratch failed (%d)\n", ret);
+        return ret;
+    }
+#ifdef RT_USING_DEVICE_OPS
+    dev->parent.ops = &spinand_mtd_device_ops;
+#endif
+    spinand.scratch_start = used_blocks;
+    spinand.scratch_blocks = blocks;
+    rt_kprintf("spinand: nand_scratch = physical blocks %u..%u "
+               "(%u KiB, writable)\n", used_blocks, used_blocks + blocks - 1,
+               (unsigned int)blocks * spinand.page_size *
+               spinand.pages_per_block / 1024U);
+    return RT_EOK;
+}
+#endif /* BSP_SPINAND_SCRATCH_MTD */
+
+/* ------------------------------------------------------------------ */
+/* Public read-only helpers                                           */
+/* ------------------------------------------------------------------ */
+
+rt_err_t aic_spinand_ro_ready(void)
+{
+    return spinand.ready ? RT_EOK : -RT_ENOSYS;
+}
+
+rt_err_t aic_spinand_ro_get_info(struct aic_spinand_ro_info *info)
+{
+    if (info == RT_NULL)
+        return -RT_EINVAL;
+    if (!spinand.ready)
+        return -RT_ENOSYS;
+
+    rt_memset(info, 0, sizeof(*info));
+    rt_memcpy(info->id, spinand.id, sizeof(info->id));
+    info->model = (spinand.model != RT_NULL) ? spinand.model->name : "unknown";
+    info->page_size = spinand.page_size;
+    info->oob_size = spinand.oob_size;
+    info->pages_per_block = spinand.pages_per_block;
+    info->block_count = spinand.block_count;
+    info->ecc_strength = spinand.ecc_strength;
+    info->bus_hz = (spinand.qspi != RT_NULL) ? spinand.qspi->config.parent.max_hz : 0;
+    return RT_EOK;
+}
+
+rt_err_t aic_spinand_ro_read_status(rt_uint8_t *status)
+{
+    int ret;
+
+    if (status == RT_NULL)
+        return -RT_EINVAL;
+    if (!spinand.ready)
+        return -RT_ENOSYS;
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_status_reg(status);
+    nand_unlock();
+    return (ret == RT_EOK) ? RT_EOK : -RT_EIO;
+}
+
+rt_err_t aic_spinand_ro_read_cfg(rt_uint8_t *cfg)
+{
+    int ret;
+
+    if (cfg == RT_NULL)
+        return -RT_EINVAL;
+    if (!spinand.ready)
+        return -RT_ENOSYS;
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_reg(SPINAND_REG_CFG, cfg);
+    nand_unlock();
+    return (ret == RT_EOK) ? RT_EOK : -RT_EIO;
+}
+
+int aic_spinand_ro_read_page(rt_uint32_t page,
+                             rt_uint8_t *data, rt_uint32_t data_len,
+                             rt_uint8_t *oob, rt_uint32_t oob_len,
+                             int *result)
+{
+    int ret;
+
+    if (result != RT_NULL)
+        *result = SPINAND_RO_EIO;
+    if (!spinand.ready)
+        return SPINAND_RO_EIO;
+    if (nand_lock() != RT_EOK)
+        return SPINAND_RO_EIO;
+    ret = spinand_read_page_locked(page, data, data_len, oob, oob_len, result);
+    nand_unlock();
+    return ret;
+}
+
+rt_err_t aic_spinand_ro_check_block(rt_uint32_t block, rt_bool_t *bad)
+{
+    rt_uint8_t marker;
+    int ret;
+
+    if (bad == RT_NULL)
+        return -RT_EINVAL;
+    if (!spinand.ready)
+        return -RT_ENOSYS;
+    if (block >= spinand.block_count)
+        return -RT_EINVAL;
+    if (nand_lock() != RT_EOK)
+        return -RT_EIO;
+    ret = spinand_read_marker_locked(block, &marker);
+    nand_unlock();
+    if (ret != RT_EOK)
+        return ret;
+    *bad = (marker != 0xFF) ? RT_TRUE : RT_FALSE;
+    return RT_EOK;
+}
+
+/* ------------------------------------------------------------------ */
+/* MSH commands (read-only)                                           */
+/* ------------------------------------------------------------------ */
+
+#ifdef RT_USING_FINSH
+
+static const char *nand_ecc_text(int result)
+{
+    switch (result)
+    {
+    case SPINAND_RO_OK:
+        return "clean";
+    case SPINAND_RO_ECC_OK:
+        return "corrected";
+    case SPINAND_RO_EECC:
+        return "UNCORRECTABLE";
+    case SPINAND_RO_ETIMEOUT:
+        return "timeout";
+    case SPINAND_RO_EINVAL:
+        return "invalid";
+    default:
+        return "transport error";
+    }
+}
+
+static void nand_hex_dump(const char *tag, const rt_uint8_t *buf,
+                          rt_uint32_t len, rt_uint32_t max)
+{
+    rt_uint32_t i;
+
+    if (len > max)
+        len = max;
+    rt_kprintf("%s (%u byte%s shown):", tag, len, len == 1 ? "" : "s");
+    for (i = 0; i < len; i++)
+    {
+        if (i % 16 == 0)
+            rt_kprintf("\n  %04x:", i);
+        rt_kprintf(" %02x", buf[i]);
+    }
+    rt_kprintf("\n");
+}
+
+static rt_uint32_t nand_crc32(const rt_uint8_t *buf, rt_uint32_t len)
+{
+    rt_uint32_t crc = 0xFFFFFFFFU;
+    rt_uint32_t i, bit;
+
+    for (i = 0; i < len; i++)
+    {
+        crc ^= buf[i];
+        for (bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+    }
+    return crc ^ 0xFFFFFFFFU;
+}
+
+/*
+ * Strict unsigned number parser for MSH arguments.
+ *   - accepts decimal or 0x/0X hex
+ *   - rejects sign characters, whitespace, trailing garbage
+ *   - rejects values that do not fit a rt_uint32_t
+ */
+static int nand_parse_u32(const char *text, rt_uint32_t *value)
+{
+    rt_uint64_t acc = 0;
+    rt_uint32_t base = 10;
+    int saw_digit = 0;
+    int overflow = 0;
+
+    if (text == RT_NULL || value == RT_NULL)
+        return -1;
+
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+    {
+        base = 16;
+        text += 2;
+    }
+
+    for (; *text != '\0'; text++)
+    {
+        int digit;
+
+        if (*text >= '0' && *text <= '9')
+            digit = *text - '0';
+        else if (base == 16 && *text >= 'a' && *text <= 'f')
+            digit = *text - 'a' + 10;
+        else if (base == 16 && *text >= 'A' && *text <= 'F')
+            digit = *text - 'A' + 10;
+        else
+            return -1;      /* sign, whitespace or illegal character */
+
+        saw_digit = 1;
+        acc = acc * base + (rt_uint32_t)digit;
+        if (acc > 0xFFFFFFFFULL)
+        {
+            overflow = 1;   /* keep scanning so trailing garbage also errors */
+        }
+    }
+
+    if (!saw_digit || overflow)
+        return -1;
+    *value = (rt_uint32_t)acc;
+    return 0;
+}
+
+static void aic_nand_info(void)
+{
+    struct aic_spinand_ro_info info;
+
+    if (aic_spinand_ro_get_info(&info) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_info: SPI NAND is not initialised\n");
+        return;
+    }
+
+    rt_kprintf("SPI NAND\n");
+    rt_kprintf("  device  : spinand0 on qspi0\n");
+    rt_kprintf("  jedec   : %02X %02X %02X %02X\n",
+               info.id[0], info.id[1], info.id[2], info.id[3]);
+    rt_kprintf("  model   : %s\n", info.model);
+    rt_kprintf("  page    : %u bytes\n", info.page_size);
+    rt_kprintf("  oob     : %u bytes\n", info.oob_size);
+    rt_kprintf("  block   : %u pages (%u bytes)\n", info.pages_per_block,
+               (unsigned int)info.page_size * info.pages_per_block);
+    rt_kprintf("  blocks  : %u (%u MiB)\n", info.block_count,
+               (unsigned int)info.block_count * info.page_size *
+               info.pages_per_block / (1024U * 1024U));
+    rt_kprintf("  ecc     : on-chip, strength %u bit/512B\n",
+               info.ecc_strength);
+    rt_kprintf("  qspi    : %u Hz requested, 1-1-1 synchronous\n", info.bus_hz);
+#if defined(BSP_SPINAND_READONLY) && defined(BSP_SPINAND_SCRATCH_MTD)
+    rt_kprintf("  mode    : image partitions read-only "
+               "(program/erase/mark rejected)\n");
+#elif defined(BSP_SPINAND_READONLY)
+    rt_kprintf("  mode    : read-only (program/erase/mark rejected)\n");
+#else
+    rt_kprintf("  mode    : writable image partitions "
+               "(program/erase/mark allowed)\n");
+#endif
+#ifdef BSP_SPINAND_SCRATCH_MTD
+    if (spinand.scratch_blocks != 0)
+        rt_kprintf("  scratch : nand_scratch, physical blocks %u..%u\n",
+                   spinand.scratch_start,
+                   spinand.scratch_start + spinand.scratch_blocks - 1);
+    else
+        rt_kprintf("  scratch : not registered\n");
+#endif
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_info, aic_nand_info,
+                     show SPI NAND identification and geometry);
+
+static void aic_nand_status(void)
+{
+    rt_uint8_t sr = 0, cfg = 0;
+    int ecc;
+
+    rt_hw_qspi0_dump();
+    if (!spinand.ready)
+    {
+        rt_kprintf("aic_nand_status: SPI NAND is not initialised\n");
+        if (spinand.qspi != RT_NULL &&
+            spinand_read_status_reg(&sr) == RT_EOK)
+            rt_kprintf("aic_nand_status: raw STATUS=0x%02x\n", sr);
+        return;
+    }
+    if (aic_spinand_ro_read_status(&sr) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_status: failed to read status register\n");
+        return;
+    }
+    if (aic_spinand_ro_read_cfg(&cfg) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_status: failed to read config register\n");
+        return;
+    }
+
+    ecc = spinand_decode_ecc(sr);
+    rt_kprintf("status  : 0x%02X\n", sr);
+    rt_kprintf("  busy        : %s\n", (sr & SPINAND_STATUS_BUSY) ? "yes" : "no");
+    rt_kprintf("  erase fail  : %s\n", (sr & (1U << 2)) ? "yes" : "no");
+    rt_kprintf("  program fail: %s\n", (sr & (1U << 3)) ? "yes" : "no");
+    rt_kprintf("  ecc bits    : %u (%s)\n", (sr & SPINAND_STATUS_ECC_MASK) >> 4,
+               (ecc == 0) ? "no bit flips" :
+               (ecc == 1) ? "bit flips corrected" :
+               (ecc == -1) ? "uncorrectable" : "reserved");
+    rt_kprintf("config  : 0x%02X\n", cfg);
+    rt_kprintf("  quad        : %s\n", (cfg & SPINAND_CFG_QUAD_ENABLE) ? "on" : "off");
+    rt_kprintf("  buffer read : %s\n", (cfg & SPINAND_CFG_BUF_ENABLE) ? "on" : "off");
+    rt_kprintf("  on-chip ecc : %s\n", (cfg & SPINAND_CFG_ECC_ENABLE) ? "on" : "off");
+    rt_kprintf("note    : erase/program fail bits are latched by the chip\n"
+               "          and are only meaningful after a write or erase.\n");
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_status, aic_nand_status,
+                     show SPI NAND status and config registers);
+
+static void aic_nand_read_page(int argc, char **argv)
+{
+    struct aic_spinand_ro_info info;
+    rt_uint8_t *data;
+    rt_uint8_t *oob;
+    rt_uint32_t page;
+    int result = SPINAND_RO_EIO;
+    int ret;
+
+    if (argc != 2)
+    {
+        rt_kprintf("usage: aic_nand_read_page <physical_page>\n");
+        return;
+    }
+    if (nand_parse_u32(argv[1], &page) != 0)
+    {
+        rt_kprintf("aic_nand_read_page: bad page number '%s'\n", argv[1]);
+        return;
+    }
+    if (aic_spinand_ro_get_info(&info) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_read_page: SPI NAND is not initialised\n");
+        return;
+    }
+    if (page >= (rt_uint32_t)info.block_count * info.pages_per_block)
+    {
+        rt_kprintf("aic_nand_read_page: page %u out of range (max %u)\n",
+                   page, (unsigned int)info.block_count * info.pages_per_block - 1U);
+        return;
+    }
+
+    data = (rt_uint8_t *)rt_malloc(info.page_size);
+    oob = (rt_uint8_t *)rt_malloc(info.oob_size);
+    if (data == RT_NULL || oob == RT_NULL)
+    {
+        rt_kprintf("aic_nand_read_page: out of memory\n");
+        rt_free(data);
+        rt_free(oob);
+        return;
+    }
+
+    ret = aic_spinand_ro_read_page(page, data, info.page_size,
+                                   oob, info.oob_size, &result);
+    rt_kprintf("physical page %u: %s\n", page, nand_ecc_text(ret));
+    if (ret == SPINAND_RO_OK || ret == SPINAND_RO_ECC_OK)
+    {
+        nand_hex_dump("data", data, info.page_size, 32);
+        nand_hex_dump("oob ", oob, info.oob_size, 16);
+    }
+    rt_free(data);
+    rt_free(oob);
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_read_page, aic_nand_read_page,
+                     read a raw physical NAND page (page 0..N-1));
+
+static void aic_nand_check_block(int argc, char **argv)
+{
+    struct aic_spinand_ro_info info;
+    rt_uint32_t block;
+    rt_bool_t bad = RT_FALSE;
+    rt_err_t ret;
+
+    if (argc != 2)
+    {
+        rt_kprintf("usage: aic_nand_check_block <physical_block>\n");
+        return;
+    }
+    if (nand_parse_u32(argv[1], &block) != 0)
+    {
+        rt_kprintf("aic_nand_check_block: bad block number '%s'\n", argv[1]);
+        return;
+    }
+    if (aic_spinand_ro_get_info(&info) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_check_block: SPI NAND is not initialised\n");
+        return;
+    }
+    if (block >= info.block_count)
+    {
+        rt_kprintf("aic_nand_check_block: block %u out of range (max %u)\n",
+                   block, info.block_count - 1U);
+        return;
+    }
+
+    ret = aic_spinand_ro_check_block(block, &bad);
+    if (ret != RT_EOK)
+    {
+        rt_kprintf("physical block %u: marker read failed (%d)\n", block, ret);
+        return;
+    }
+    rt_kprintf("physical block %u: %s (OOB[0]=%s)\n", block,
+               bad ? "FACTORY BAD" : "good",
+               bad ? "not 0xFF" : "0xFF");
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_check_block, aic_nand_check_block,
+                     check the factory bad-block marker of a physical block);
+
+rt_err_t aic_nand_get_fit_info(const char *part,
+                               struct aic_nand_fit_info *info)
+{
+    struct rt_mtd_nand_device *dev;
+    rt_uint8_t hdr[8];
+    rt_err_t ret;
+
+    if (part == RT_NULL || info == RT_NULL)
+        return -RT_EINVAL;
+
+    rt_memset(info, 0, sizeof(*info));
+
+    dev = (struct rt_mtd_nand_device *)rt_device_find(part);
+    if (dev == RT_NULL || dev->parent.type != RT_Device_Class_MTD)
+        return -RT_ENOENT;
+
+    info->part_bytes = (rt_uint32_t)dev->block_total *
+                       dev->pages_per_block * dev->page_size;
+    ret = rt_mtd_nand_read(dev, 0, hdr, sizeof(hdr), RT_NULL, 0);
+    info->read_err = ret;
+    if (ret != RT_MTD_EOK && ret != RT_MTD_EECC_CORRECT)
+        return RT_EOK;
+
+    info->magic = ((rt_uint32_t)hdr[0] << 24) | ((rt_uint32_t)hdr[1] << 16) |
+                  ((rt_uint32_t)hdr[2] << 8) | hdr[3];
+    info->totalsize = ((rt_uint32_t)hdr[4] << 24) |
+                      ((rt_uint32_t)hdr[5] << 16) |
+                      ((rt_uint32_t)hdr[6] << 8) | hdr[7];
+    info->present = (info->magic == SPINAND_FIT_MAGIC &&
+                     info->totalsize >= 0x100U &&
+                     info->totalsize <= info->part_bytes);
+    return RT_EOK;
+}
+
+static void nand_report_slot_fit(const char *part)
+{
+    struct aic_nand_fit_info info;
+
+    if (aic_nand_get_fit_info(part, &info) != RT_EOK)
+    {
+        rt_kprintf("%-7s : not registered as a linear MTD device\n", part);
+        return;
+    }
+
+    if (info.read_err != RT_MTD_EOK &&
+        info.read_err != RT_MTD_EECC_CORRECT)
+    {
+        rt_kprintf("%-7s : header read failed (%d)\n", part, info.read_err);
+        return;
+    }
+
+    if (info.present)
+    {
+        rt_kprintf("%-7s : FIT image detected (magic 0x%08X, "
+                   "totalsize %u bytes, partition %u bytes)\n",
+                   part, info.magic, info.totalsize, info.part_bytes);
+    }
+    else
+    {
+        rt_kprintf("%-7s : no valid FIT header (magic 0x%08X, "
+                   "totalsize %u, partition %u bytes)\n",
+                   part, info.magic, info.totalsize, info.part_bytes);
+    }
+}
+
+static void nand_report_os_fit(void)
+{
+    nand_report_slot_fit("os");
+    nand_report_slot_fit("os_r");
+}
+
+static void aic_nand_partitions(void)
+{
+    struct aic_spinand_ro_info info;
+    rt_uint32_t i;
+
+    if (aic_spinand_ro_get_info(&info) != RT_EOK)
+    {
+        rt_kprintf("aic_nand_partitions: SPI NAND is not initialised\n");
+        return;
+    }
+
+    rt_kprintf("NAND partitions from pack/image_cfg.json\n");
+    rt_kprintf("  block size %u bytes, %u blocks total\n",
+               (unsigned int)info.page_size * info.pages_per_block,
+               info.block_count);
+    rt_kprintf("  %-9s %8s %10s %8s %8s %-6s %s\n",
+               "name", "start", "offset", "blocks", "bytes", "type", "bad/err");
+    for (i = 0; i < aic_board_nand.part_count; i++)
+    {
+        const struct spinand_part_desc *part = &aic_board_nand.parts[i];
+        rt_uint32_t bytes = (rt_uint32_t)part->block_count *
+                            info.pages_per_block * info.page_size;
+        rt_uint32_t offset = (rt_uint32_t)part->start_block *
+                             info.pages_per_block * info.page_size;
+        rt_uint32_t bad = 0, err = 0;
+
+        if (part->linear)
+        {
+            rt_uint32_t b;
+            for (b = 0; b < part->block_count; b++)
+            {
+                rt_bool_t is_bad = RT_FALSE;
+                rt_err_t ret = aic_spinand_ro_check_block(part->start_block + b,
+                                                          &is_bad);
+                if (ret != RT_EOK)
+                    err++;
+                else if (is_bad)
+                    bad++;
+            }
+        }
+
+        rt_kprintf("  %-9s %8u 0x%08x %8u %8u %-6s %u/%u\n", part->name,
+                   part->start_block, offset, part->block_count, bytes,
+                   part->linear ? "MTD" : "NFTL", bad, err);
+    }
+    rt_kprintf("  data/data_r are NFTL-backed; no linear MTD device is\n"
+               "  registered for them.  Raw access is only available through\n"
+               "  aic_nand_read_page with physical page numbers.\n");
+    rt_kprintf("  MTD page numbers are partition-relative; partition reads\n"
+               "  are linear and do not skip bad blocks.  A non-zero bad count\n"
+               "  means the linear view may differ from a Bootloader mapping\n"
+               "  that skips factory-bad blocks; verify against the image.\n");
+    nand_report_os_fit();
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_partitions, aic_nand_partitions,
+                     list the NAND partition layout and check os/os_r FIT headers);
+
+static void aic_nand_read_part(int argc, char **argv)
+{
+    struct rt_mtd_nand_device *dev;
+    rt_uint32_t offset, length, part_bytes;
+    rt_uint32_t page_size, pages, done = 0;
+    rt_uint8_t *buf;
+    rt_uint8_t *pagebuf;
+    rt_err_t ret = RT_EOK;
+
+    if (argc != 4)
+    {
+        rt_kprintf("usage: aic_nand_read_part <name> <offset> <length>\n");
+        return;
+    }
+    if (nand_parse_u32(argv[2], &offset) != 0 ||
+        nand_parse_u32(argv[3], &length) != 0)
+    {
+        rt_kprintf("aic_nand_read_part: bad offset/length\n");
+        return;
+    }
+    if (length == 0)
+    {
+        rt_kprintf("aic_nand_read_part: length must be non-zero\n");
+        return;
+    }
+    if (length > SPINAND_PART_PRINT_MAX)
+    {
+        rt_kprintf("aic_nand_read_part: length limited to %u bytes\n",
+                   SPINAND_PART_PRINT_MAX);
+        return;
+    }
+
+    dev = (struct rt_mtd_nand_device *)rt_device_find(argv[1]);
+    if (dev == RT_NULL || dev->parent.type != RT_Device_Class_MTD)
+    {
+        rt_kprintf("aic_nand_read_part: '%s' is not a linear MTD partition "
+                   "(NFTL partitions cannot be read as raw blocks)\n", argv[1]);
+        return;
+    }
+
+    page_size = dev->page_size;
+    pages = (rt_uint32_t)dev->block_total * dev->pages_per_block;
+    part_bytes = pages * page_size;
+    if (offset >= part_bytes || length > part_bytes - offset)
+    {
+        rt_kprintf("aic_nand_read_part: range 0x%x+0x%x exceeds "
+                   "partition '%s' (0x%x bytes)\n",
+                   offset, length, argv[1], part_bytes);
+        return;
+    }
+
+    buf = (rt_uint8_t *)rt_malloc(length);
+    pagebuf = (rt_uint8_t *)rt_malloc(page_size);
+    if (buf == RT_NULL || pagebuf == RT_NULL)
+    {
+        rt_kprintf("aic_nand_read_part: out of memory\n");
+        rt_free(buf);
+        rt_free(pagebuf);
+        return;
+    }
+
+    while (done < length)
+    {
+        rt_uint32_t pos = offset + done;
+        rt_uint32_t page_index = pos / page_size;
+        rt_uint32_t in_page = pos % page_size;
+        rt_uint32_t chunk = page_size - in_page;
+
+        if (chunk > length - done)
+            chunk = length - done;
+        ret = rt_mtd_nand_read(dev, page_index, pagebuf, page_size,
+                               RT_NULL, 0);
+        if (ret != RT_MTD_EOK && ret != RT_MTD_EECC_CORRECT)
+        {
+            rt_kprintf("aic_nand_read_part: page %u read failed (%d)\n",
+                       page_index, ret);
+            break;
+        }
+        rt_memcpy(buf + done, pagebuf + in_page, chunk);
+        done += chunk;
+    }
+
+    if (done == length)
+    {
+        rt_kprintf("partition '%s': read %u bytes at offset 0x%x, crc32 0x%08x\n",
+                   argv[1], length, offset, nand_crc32(buf, length));
+        nand_hex_dump("data", buf, length, 64);
+        rt_kprintf("note: offset is partition-relative; pages are read "
+                   "linearly without bad-block remapping\n");
+    }
+    else
+    {
+        rt_kprintf("partition '%s': %u of %u bytes read before the error\n",
+                   argv[1], done, length);
+    }
+
+    rt_free(buf);
+    rt_free(pagebuf);
+}
+MSH_CMD_EXPORT_ALIAS(aic_nand_read_part, aic_nand_read_part,
+                     read bytes from a linear MTD partition (read-only));
+
+#endif /* RT_USING_FINSH */
+
+/* ------------------------------------------------------------------ */
+/* Initialisation                                                     */
+/* ------------------------------------------------------------------ */
+
+static int rt_hw_spinand_ro_init(void)
+{
+    static rt_bool_t attempted = RT_FALSE;
+    rt_err_t ret;
+    rt_uint8_t pre_id[4] = {0};
+    int attempt;
+
+    if (attempted)
+    {
+        rt_kprintf("spinand: init already attempted (%s)\n",
+                   spinand.ready ? "ready" : "failed, not retrying");
+        return spinand.ready ? RT_EOK : -RT_ERROR;
+    }
+    if (aic_spinand_layout_check(&aic_board_nand) != 0)
+        return -RT_EINVAL;
+    attempted = RT_TRUE;
+
+    rt_memset(&spinand, 0, sizeof(spinand));
+    if (rt_mutex_init(&spinand.lock, "spinand", RT_IPC_FLAG_PRIO) != RT_EOK)
+    {
+        rt_kprintf("spinand: mutex init failed\n");
+        return -RT_ERROR;
+    }
+    spinand.lock_ready = RT_TRUE;
+
+    ret = spinand_attach_qspi();
+    if (ret != RT_EOK)
+        return -RT_ERROR;
+
+    /* Read the ID before reset.  This separates an RX/pinmux problem from
+     * a reset/status problem in the boot log. */
+    if (spinand_read_id_op(pre_id) == RT_EOK)
+        rt_kprintf("spinand: pre-reset ID %02X %02X %02X %02X\n",
+                   pre_id[0], pre_id[1], pre_id[2], pre_id[3]);
+    else
+        rt_kprintf("spinand: pre-reset ID read failed\n");
+
+    /*
+     * The vendor sequence starts with a software reset.  A reset that
+     * fails to clear BUSY is retried once; a second failure aborts
+     * bring-up instead of registering a device that cannot answer.
+     */
+    for (attempt = 0; attempt < 2; attempt++)
+    {
+        rt_uint8_t sr = 0;
+        int busy;
+
+        if (attempt > 0)
+            rt_kprintf("spinand: reset retry %d\n", attempt);
+
+        if (spinand_transfer(&cmd_reset, 0, RT_NULL, RT_NULL, 0) != RT_EOK)
+        {
+            rt_kprintf("spinand: reset command failed\n");
+            continue;
+        }
+        busy = spinand_wait_busy(&sr);
+        if (busy == -RT_ETIMEOUT)
+        {
+            rt_kprintf("spinand: reset busy timeout, STATUS=0x%02x\n", sr);
+            rt_hw_qspi0_dump();
+            continue;
+        }
+        if (busy != RT_EOK)
+        {
+            rt_kprintf("spinand: reset STATUS read failed\n");
+            continue;
+        }
+        /* 0xFF is the pattern a stuck/garbage read path produces; a valid
+         * idle STATUS (BUSY cleared) never looks like that. */
+        if (sr == 0xFF)
+        {
+            rt_kprintf("spinand: reset left STATUS=0xFF (read path suspect)\n");
+            continue;
+        }
+        rt_kprintf("spinand: reset ok, STATUS=0x%02x\n", sr);
+        break;
+    }
+    if (attempt == 2)
+        return -RT_ERROR;
+
+    ret = spinand_probe();
+    if (ret != RT_EOK)
+        return -RT_ERROR;
+
+    ret = spinand_register_partitions();
+    if (ret != RT_EOK)
+    {
+        /* Raw access is still available for diagnostics. */
+        rt_kprintf("spinand: MTD partition registration FAILED (%d), "
+                   "continuing with raw reads only\n", ret);
+    }
+#ifdef BSP_SPINAND_SCRATCH_MTD
+    else
+    {
+        ret = spinand_register_scratch();
+        if (ret != RT_EOK)
+            rt_kprintf("spinand: nand_scratch not registered (%d)\n", ret);
+    }
+#endif
+    return RT_EOK;
+}
+INIT_DEVICE_EXPORT(rt_hw_spinand_ro_init);

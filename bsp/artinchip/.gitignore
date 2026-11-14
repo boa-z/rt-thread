@@ -1,0 +1,6 @@
+# Local build artifacts, packaged images and HIL logs.
+/artifacts/
+
+# Python bytecode from the BSP tools.
+__pycache__/
+*.pyc
